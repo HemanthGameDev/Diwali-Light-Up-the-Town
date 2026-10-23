@@ -1,5 +1,5 @@
-
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace DiwaliTown.Crackers
 {
@@ -14,12 +14,16 @@ namespace DiwaliTown.Crackers
         [SerializeField] private Sprite previewIcon;
 
         [Header("Economy")]
-        [SerializeField, Min(1)] private int placementCost = 1;
+        [FormerlySerializedAs("placementCost")]
+        [SerializeField, Min(1)] private int unitPrice = 1;
+
+        [SerializeField, Min(1)] private int purchaseBatchSize = 10;
         [SerializeField, Min(0)] private int blastReward = 2;
 
         public string DisplayName => displayName;
         public Sprite PreviewIcon => previewIcon;
-        public int PlacementCost => placementCost;
+        public int UnitPrice => unitPrice;
+        public int PurchaseBatchSize => purchaseBatchSize;
         public int BlastReward => blastReward;
     }
 }
