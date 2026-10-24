@@ -104,7 +104,7 @@ namespace DiwaliTown.UI
 
         private void HandleSlotClicked(int index)
         {
-            loadout.TrySelectSlot(index);
+            loadout.TryActivateSlot(index);
         }
 
         private void HandleStockChanged(

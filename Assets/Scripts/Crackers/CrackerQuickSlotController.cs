@@ -1,3 +1,4 @@
+
 using System;
 using UnityEngine;
 
@@ -21,12 +22,19 @@ namespace DiwaliTown.Crackers
                 : null;
 
         public event Action SlotsChanged;
-        public event Action<int, CrackerDefinition> SlotSelectionChanged;
+
+        public event Action<int, CrackerDefinition>
+            SlotSelectionChanged;
+
+        public event Action<int, CrackerDefinition>
+            SlotActivated;
 
         public CrackerDefinition GetSlotItem(int index)
         {
             if (index < 0 || index >= SlotCount)
+            {
                 return null;
+            }
 
             return slots[index];
         }
@@ -38,15 +46,16 @@ namespace DiwaliTown.Crackers
             assignedIndex = -1;
 
             if (definition == null)
+            {
                 return false;
+            }
 
-            // Don't assign the same cracker type twice.
+            // Reuse an existing slot for this cracker type.
             for (int i = 0; i < SlotCount; i++)
             {
                 if (slots[i] == definition)
                 {
                     assignedIndex = i;
-                    TrySelectSlot(i);
                     return true;
                 }
             }
@@ -54,21 +63,21 @@ namespace DiwaliTown.Crackers
             for (int i = 0; i < SlotCount; i++)
             {
                 if (slots[i] != null)
+                {
                     continue;
+                }
 
                 slots[i] = definition;
                 assignedIndex = i;
 
                 SlotsChanged?.Invoke();
-                TrySelectSlot(i);
-
                 return true;
             }
 
             return false;
         }
 
-        public bool TrySelectSlot(int index)
+        public bool TryActivateSlot(int index)
         {
             if (index < 0 ||
                 index >= SlotCount ||
@@ -80,6 +89,11 @@ namespace DiwaliTown.Crackers
             selectedSlotIndex = index;
 
             SlotSelectionChanged?.Invoke(
+                index,
+                slots[index]
+            );
+
+            SlotActivated?.Invoke(
                 index,
                 slots[index]
             );

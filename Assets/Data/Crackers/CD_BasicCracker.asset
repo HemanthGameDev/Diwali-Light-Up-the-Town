@@ -14,5 +14,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::DiwaliTown.Crackers.CrackerDefinition
   displayName: Basic Cracker
   previewIcon: {fileID: 0}
-  placementCost: 1
+  unitPrice: 1
+  placeablePrefab: {fileID: 187398476365128708, guid: a70f508fa34c4974b8f970b32a50f85e, type: 3}
+  placementPreviewPrefab: {fileID: 187398476365128708, guid: 9c54ff6829062964e98fecd555744808, type: 3}
+  blastEffectPrefab: {fileID: 1337198075554910, guid: 25c7aa9ad705fe143a4d71c1c8deb7d4, type: 3}
+  blastEffectLifetime: 2
+  purchaseBatchSize: 10
   blastReward: 2

@@ -17,6 +17,22 @@ namespace DiwaliTown.Crackers
         [FormerlySerializedAs("placementCost")]
         [SerializeField, Min(1)] private int unitPrice = 1;
 
+        [Header("Placement")]
+        [SerializeField] private GameObject placeablePrefab;
+        [SerializeField] private GameObject placementPreviewPrefab;
+
+        [Header("Blast Effect")]
+        [SerializeField] private GameObject blastEffectPrefab;
+
+        [SerializeField, Min(0.1f)]
+        private float blastEffectLifetime = 2f;
+
+        public GameObject BlastEffectPrefab => blastEffectPrefab;
+        public float BlastEffectLifetime => blastEffectLifetime;
+
+        public GameObject PlaceablePrefab => placeablePrefab;
+        public GameObject PlacementPreviewPrefab => placementPreviewPrefab;
+
         [SerializeField, Min(1)] private int purchaseBatchSize = 10;
         [SerializeField, Min(0)] private int blastReward = 2;
 
