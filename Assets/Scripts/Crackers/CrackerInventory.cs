@@ -93,5 +93,40 @@ namespace DiwaliTown.Crackers
             StockChanged?.Invoke(definition, newStock);
             return true;
         }
+
+        public void ClearAllStock()
+        {
+            var existingDefinitions =
+                new List<CrackerDefinition>(stock.Keys);
+
+            stock.Clear();
+
+            foreach (CrackerDefinition definition in existingDefinitions)
+            {
+                StockChanged?.Invoke(definition, 0);
+            }
+        }
+
+        public bool RestoreStock(
+            CrackerDefinition definition,
+            int quantity)
+        {
+            if (definition == null || quantity < 0)
+            {
+                return false;
+            }
+
+            if (quantity == 0)
+            {
+                stock.Remove(definition);
+            }
+            else
+            {
+                stock[definition] = quantity;
+            }
+
+            StockChanged?.Invoke(definition, quantity);
+            return true;
+        }
     }
 }

@@ -10,6 +10,11 @@ namespace DiwaliTown.Diyas
         [SerializeField] private GameObject highlightVisual;
         [SerializeField] private GameObject litVisual;
 
+        [Header("Save Identity")]
+        [SerializeField] private string persistentId;
+
+        public string PersistentId => persistentId;
+
         private bool isLit;
 
         public bool IsLit => isLit;
@@ -62,6 +67,16 @@ namespace DiwaliTown.Diyas
             }
 
             return true;
+        }
+        public void RestoreLitState(bool lit)
+        {
+            isLit = lit;
+
+            if (highlightVisual != null)
+                highlightVisual.SetActive(false);
+
+            if (litVisual != null)
+                litVisual.SetActive(lit);
         }
     }
 }

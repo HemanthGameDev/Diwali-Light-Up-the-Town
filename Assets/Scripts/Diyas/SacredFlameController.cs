@@ -4,6 +4,7 @@ using DiwaliTown.Economy;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using System.Collections.Generic;
 
 namespace DiwaliTown.Diyas
 {
@@ -22,11 +23,14 @@ namespace DiwaliTown.Diyas
 
         [Header("Required Diyas")]
         [SerializeField] private DiyaAnchor[] diyaAnchors;
+        public IReadOnlyList<DiyaAnchor> RequiredDiyas => diyaAnchors;
 
         [Header("UI")]
         [SerializeField] private Button purchaseButton;
         [SerializeField] private TMP_Text buttonLabel;
         [SerializeField] private TMP_Text statusText;
+
+        public bool FirstDiyaRewardGranted => firstDiyaRewardGranted;
 
         private bool hasCharge;
         private bool firstDiyaRewardGranted;
@@ -271,6 +275,18 @@ namespace DiwaliTown.Diyas
 
             statusText.text =
                 $"Spend {sacredFlameCost} gold to light one diya.";
+        }
+        public void RestoreProgress(
+    bool restoredHasCharge,
+    bool restoredFirstDiyaRewardGranted)
+        {
+            // Never restore a charge if there are no unlit diyas left.
+            hasCharge = restoredHasCharge && HasUnlitDiyas();
+
+            firstDiyaRewardGranted = restoredFirstDiyaRewardGranted;
+
+            SetAllHighlights(hasCharge);
+            RefreshUI();
         }
     }
 }

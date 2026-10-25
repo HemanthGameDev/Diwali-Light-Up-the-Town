@@ -199,5 +199,28 @@ namespace DiwaliTown.Town
 
             AreaCompleted?.Invoke();
         }
+        public void RefreshFromRestoredDiyas()
+        {
+            if (requiredDiyas == null || requiredDiyas.Length == 0)
+                return;
+
+            RebuildProgressFromScene();
+            RefreshProgressUI();
+
+            if (litDiyas.Count >= requiredDiyas.Length)
+            {
+                CompleteArea();
+            }
+            else
+            {
+                isAreaComplete = false;
+
+                if (centralSculptureLitVisual != null)
+                    centralSculptureLitVisual.SetActive(false);
+
+                if (areaCompletePanel != null)
+                    areaCompletePanel.SetActive(false);
+            }
+        }
     }
 }

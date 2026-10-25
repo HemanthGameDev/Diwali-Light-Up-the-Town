@@ -29,6 +29,10 @@ namespace DiwaliTown.UI
         [SerializeField] private TMP_Text statusText;
         [SerializeField] private TMP_Text actionButtonLabel;
 
+        [Header("Unlock Notification Dots")]
+        [SerializeField] private GameObject catalogNotificationDot;
+        [SerializeField] private GameObject basicCrackerNewBadge;
+
         private void OnEnable()
         {
             if (!ValidateReferences())
@@ -37,12 +41,13 @@ namespace DiwaliTown.UI
                 return;
             }
 
-            unlockController.BasicCrackerUnlocked += RefreshUI;
+            unlockController.UnlockStateChanged += RefreshUI;
             inventory.StockChanged += HandleStockChanged;
 
             openCatalogButton.onClick.AddListener(OpenCatalog);
             closeButton.onClick.AddListener(CloseCatalog);
             actionButton.onClick.AddListener(HandleActionButton);
+            unlockController.NewUnlocksChanged += RefreshUI;
 
             RefreshUI();
         }
@@ -50,7 +55,7 @@ namespace DiwaliTown.UI
         private void OnDisable()
         {
             if (unlockController != null)
-                unlockController.BasicCrackerUnlocked -= RefreshUI;
+                unlockController.UnlockStateChanged -= RefreshUI;
 
             if (inventory != null)
                 inventory.StockChanged -= HandleStockChanged;
@@ -63,6 +68,9 @@ namespace DiwaliTown.UI
 
             if (actionButton != null)
                 actionButton.onClick.RemoveListener(HandleActionButton);
+
+            if (unlockController != null)
+                unlockController.NewUnlocksChanged -= RefreshUI;
         }
 
         private bool ValidateReferences()
@@ -136,6 +144,8 @@ namespace DiwaliTown.UI
                 $"assigned to quick slot {slotIndex + 1}."
             );
 
+            unlockController.MarkUnlockViewed(basicCracker);
+
             CloseCatalog();
         }
 
@@ -179,6 +189,19 @@ namespace DiwaliTown.UI
 
         private void RefreshUI()
         {
+            if (catalogNotificationDot != null)
+            {
+                catalogNotificationDot.SetActive(
+                    unlockController.HasUnseenUnlocks
+                );
+            }
+
+            if (basicCrackerNewBadge != null)
+            {
+                basicCrackerNewBadge.SetActive(
+                    unlockController.IsNewUnlock(basicCracker)
+                );
+            }
             bool unlocked = unlockController.IsBasicCrackerUnlocked;
             int stock = inventory.GetStock(basicCracker);
             int batchCost = inventory.GetBatchCost(basicCracker);

@@ -180,8 +180,10 @@ namespace DiwaliTown.Crackers
 
             Vector2 screenPosition = mouse.position.ReadValue();
 
+            
             if (IsPointerOverUI(screenPosition))
             {
+               
                 previewInstance.SetActive(false);
                 return;
             }
@@ -477,6 +479,48 @@ namespace DiwaliTown.Crackers
             }
 
             PendingCountChanged?.Invoke(pendingCrackers.Count);
+            return true;
+        }
+
+        public bool TryRestorePendingCracker(
+    CrackerDefinition definition,
+    Vector3 position,
+    Quaternion rotation)
+        {
+            if (definition == null ||
+                definition.PlaceablePrefab == null ||
+                placedCrackersRoot == null)
+            {
+                return false;
+            }
+
+            GameObject instance = Instantiate(
+                definition.PlaceablePrefab,
+                position,
+                rotation,
+                placedCrackersRoot
+            );
+
+            PlacedCracker cracker =
+                instance.GetComponent<PlacedCracker>();
+
+            if (cracker == null)
+            {
+                Destroy(instance);
+
+                Debug.LogError(
+                    "[CrackerPlacement] Restored prefab is missing PlacedCracker.",
+                    this
+                );
+
+                return false;
+            }
+
+            cracker.Initialize(definition);
+
+            pendingCrackers.Add(cracker);
+            PendingCountChanged?.Invoke(pendingCrackers.Count);
+
             return true;
         }
     }

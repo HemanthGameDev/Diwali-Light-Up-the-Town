@@ -1,6 +1,7 @@
 
 using System;
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace DiwaliTown.Crackers
 {
@@ -99,6 +100,34 @@ namespace DiwaliTown.Crackers
             );
 
             return true;
+        }
+
+        public void RestoreSlots(
+    IReadOnlyList<CrackerDefinition> restoredSlots)
+        {
+            selectedSlotIndex = -1;
+
+            var assignedDefinitions =
+                new HashSet<CrackerDefinition>();
+
+            for (int i = 0; i < SlotCount; i++)
+            {
+                CrackerDefinition definition =
+                    restoredSlots != null && i < restoredSlots.Count
+                        ? restoredSlots[i]
+                        : null;
+
+                // Each cracker type should occupy at most one slot.
+                if (definition != null &&
+                    !assignedDefinitions.Add(definition))
+                {
+                    definition = null;
+                }
+
+                slots[i] = definition;
+            }
+
+            SlotsChanged?.Invoke();
         }
     }
 }

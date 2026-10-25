@@ -27,6 +27,11 @@ namespace DiwaliTown.Crackers
         [SerializeField, Min(0.1f)]
         private float blastEffectLifetime = 2f;
 
+        [Header("Save Identity")]
+        [SerializeField] private string crackerId = "cracker.basic.red_01";
+
+        public string CrackerId => crackerId;
+
         public GameObject BlastEffectPrefab => blastEffectPrefab;
         public float BlastEffectLifetime => blastEffectLifetime;
 

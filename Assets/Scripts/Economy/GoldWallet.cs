@@ -53,5 +53,15 @@ namespace DiwaliTown.Economy
             currentGold = newBalance;
             BalanceChanged?.Invoke(currentGold);
         }
+        public bool RestoreBalance(int amount)
+        {
+            if (amount < 0)
+            {
+                return false;
+            }
+
+            SetBalance(amount);
+            return true;
+        }
     }
 }
