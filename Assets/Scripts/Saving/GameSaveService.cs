@@ -82,8 +82,20 @@ namespace DiwaliTown.Saving
             }
 
             isLoading = true;
+            Debug.Log(
+    $"[SAVE DIAG] START | " +
+    $"Platform={Application.platform} | " +
+    $"Package={Application.identifier} | " +
+    $"Path={SavePath} | " +
+    $"FileExists={File.Exists(SavePath)}"
+);
 
             bool hasSave = TryLoadFromDisk();
+            Debug.Log(
+    $"[SAVE DIAG] LOAD RESULT | " +
+    $"HasSave={hasSave} | " +
+    $"LoadFailed={loadFailed}"
+);
 
             if (loadFailed)
             {
@@ -226,61 +238,137 @@ namespace DiwaliTown.Saving
 
             return null;
         }
+
         private bool TryLoadFromDisk()
         {
             if (!File.Exists(SavePath))
+            {
+                Debug.Log("[SAVE DIAG] No save file found. Starting a new game.");
                 return false;
+            }
 
+            string json;
+
+            // First, read the file. If this fails, don't overwrite it.
             try
             {
-                string json = File.ReadAllText(SavePath);
-
-                GameSaveData loaded =
-                    JsonUtility.FromJson<GameSaveData>(json);
-
-                if (loaded == null)
-                {
-                    loadFailed = true;
-                    Debug.LogError(
-                        "[GameSaveService] Save data is invalid.",
-                        this
-                    );
-
-                    return false;
-                }
-
-                if (loaded.schemaVersion > CurrentSchemaVersion)
-                {
-                    loadFailed = true;
-                    Debug.LogError(
-                        "[GameSaveService] Save belongs to a newer " +
-                        "game version. The file was left untouched.",
-                        this
-                    );
-
-                    return false;
-                }
-
-                EnsureCollectionsExist(loaded);
-
-                saveData = loaded;
-                saveData.schemaVersion = CurrentSchemaVersion;
-
-                return true;
+                json = File.ReadAllText(SavePath);
             }
             catch (Exception exception)
             {
                 loadFailed = true;
 
                 Debug.LogError(
-                    "[GameSaveService] Failed to read save file. " +
-                    "The original file was left untouched.\n" + exception,
+                    "[GameSaveService] Could not read the save file. " +
+                    "Existing data has been preserved.\n" + exception,
+                    this
+                );
+
+                return false;
+            }
+
+            Debug.Log(
+                $"[SAVE DIAG] Read save file: {json.Length} characters."
+            );
+
+            // An existing but empty file is not a usable save.
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return HandleInvalidSaveFile(
+                    "The save file is empty or contains only whitespace."
+                );
+            }
+
+            GameSaveData loaded;
+
+            try
+            {
+                loaded = JsonUtility.FromJson<GameSaveData>(json);
+            }
+            catch (Exception exception)
+            {
+                return HandleInvalidSaveFile(
+                    "JSON deserialization failed: " + exception.Message
+                );
+            }
+
+            if (loaded == null)
+            {
+                return HandleInvalidSaveFile(
+                    "Unity returned null while loading the save."
+                );
+            }
+
+            // Never overwrite a save created by a newer version of the game.
+            if (loaded.schemaVersion > CurrentSchemaVersion)
+            {
+                loadFailed = true;
+
+                Debug.LogError(
+                    "[GameSaveService] Save belongs to a newer game version. " +
+                    "It has been left untouched.",
+                    this
+                );
+
+                return false;
+            }
+
+            EnsureCollectionsExist(loaded);
+
+            saveData = loaded;
+            saveData.schemaVersion = CurrentSchemaVersion;
+
+            Debug.Log(
+                $"[SAVE DIAG] Save loaded successfully. " +
+                $"Schema={saveData.schemaVersion}, Gold={saveData.goldBalance}"
+            );
+
+            return true;
+        }
+
+        private bool HandleInvalidSaveFile(string reason)
+        {
+            Debug.LogWarning(
+                $"[GameSaveService] Invalid save detected. {reason}"
+            );
+
+            // Preserve the original file before creating a fresh save.
+            try
+            {
+                string backupPath = SavePath + ".invalid-backup";
+
+                if (File.Exists(backupPath))
+                {
+                    backupPath = SavePath +
+                                 ".invalid-backup-" +
+                                 DateTime.UtcNow.Ticks;
+                }
+
+                File.Copy(SavePath, backupPath, false);
+
+                Debug.LogWarning(
+                    $"[GameSaveService] Invalid save backed up to: {backupPath}. " +
+                    "Starting a fresh save."
+                );
+
+                // Keep loadFailed false. Start() can initialize a new save.
+                return false;
+            }
+            catch (Exception exception)
+            {
+                // If the backup fails, preserve the existing file and stop.
+                loadFailed = true;
+
+                Debug.LogError(
+                    "[GameSaveService] Could not back up the invalid save. " +
+                    "The original file will not be overwritten.\n" + exception,
                     this
                 );
 
                 return false;
             }
         }
+
 
         private static void EnsureCollectionsExist(GameSaveData data)
         {
@@ -671,6 +759,11 @@ namespace DiwaliTown.Saving
                 string temporaryPath = SavePath + ".tmp";
 
                 File.WriteAllText(temporaryPath, json);
+                Debug.Log(
+    $"[SAVE DIAG] TEMP WRITTEN | " +
+    $"Path={temporaryPath} | " +
+    $"Bytes={new FileInfo(temporaryPath).Length}"
+);
 
                 // The temporary file prevents a partial write from
                 // directly overwriting the previous save.
@@ -683,7 +776,11 @@ namespace DiwaliTown.Saving
                 {
                     File.Move(temporaryPath, SavePath);
                 }
-
+                Debug.Log(
+    $"[SAVE DIAG] SAVE SUCCESS | " +
+    $"FileExists={File.Exists(SavePath)} | " +
+    $"Bytes={(File.Exists(SavePath) ? new FileInfo(SavePath).Length : 0)}"
+);
                 isDirty = false;
 
                 if (logSaveOperations)

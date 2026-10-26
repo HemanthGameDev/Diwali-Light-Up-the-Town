@@ -18,6 +18,9 @@ namespace DiwaliTown.UI
         [SerializeField] private TMP_Text fireButtonLabel;
         [SerializeField] private TMP_Text statusText;
 
+        [Header("Ready Indicator")]
+        [SerializeField] private GameObject fireReadyIndicator;
+
         private void OnEnable()
         {
             if (!ValidateReferences())
@@ -100,9 +103,15 @@ namespace DiwaliTown.UI
             int count = placementController.PendingCount;
 
             fireButton.interactable = count > 0;
+
             fireButtonLabel.text = count > 0
                 ? $"FIRE ({count})"
                 : "FIRE";
+
+            if (fireReadyIndicator != null)
+            {
+                fireReadyIndicator.SetActive(count > 0);
+            }
 
             if (count == 0)
             {

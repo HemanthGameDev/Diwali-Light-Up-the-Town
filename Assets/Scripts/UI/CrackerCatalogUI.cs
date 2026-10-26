@@ -31,7 +31,7 @@ namespace DiwaliTown.UI
 
         [Header("Unlock Notification Dots")]
         [SerializeField] private GameObject catalogNotificationDot;
-        [SerializeField] private GameObject basicCrackerNewBadge;
+        
 
         private void OnEnable()
         {
@@ -103,6 +103,14 @@ namespace DiwaliTown.UI
         private void OpenCatalog()
         {
             catalogPanel.SetActive(true);
+
+            // Basic Cracker is the starter type, so opening the catalog
+            // acknowledges that initial unlock.
+            if (unlockController.IsNewUnlock(basicCracker))
+            {
+                unlockController.MarkUnlockViewed(basicCracker);
+            }
+
             RefreshUI();
         }
 
@@ -196,12 +204,7 @@ namespace DiwaliTown.UI
                 );
             }
 
-            if (basicCrackerNewBadge != null)
-            {
-                basicCrackerNewBadge.SetActive(
-                    unlockController.IsNewUnlock(basicCracker)
-                );
-            }
+           
             bool unlocked = unlockController.IsBasicCrackerUnlocked;
             int stock = inventory.GetStock(basicCracker);
             int batchCost = inventory.GetBatchCost(basicCracker);
