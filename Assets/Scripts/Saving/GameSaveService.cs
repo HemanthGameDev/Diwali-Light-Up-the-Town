@@ -243,7 +243,7 @@ namespace DiwaliTown.Saving
         {
             if (!File.Exists(SavePath))
             {
-                Debug.Log("[SAVE DIAG] No save file found. Starting a new game.");
+                
                 return false;
             }
 
@@ -266,10 +266,6 @@ namespace DiwaliTown.Saving
 
                 return false;
             }
-
-            Debug.Log(
-                $"[SAVE DIAG] Read save file: {json.Length} characters."
-            );
 
             // An existing but empty file is not a usable save.
             if (string.IsNullOrWhiteSpace(json))
@@ -317,11 +313,6 @@ namespace DiwaliTown.Saving
 
             saveData = loaded;
             saveData.schemaVersion = CurrentSchemaVersion;
-
-            Debug.Log(
-                $"[SAVE DIAG] Save loaded successfully. " +
-                $"Schema={saveData.schemaVersion}, Gold={saveData.goldBalance}"
-            );
 
             return true;
         }

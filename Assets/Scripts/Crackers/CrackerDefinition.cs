@@ -30,6 +30,12 @@ namespace DiwaliTown.Crackers
         [Header("Save Identity")]
         [SerializeField] private string crackerId = "cracker.basic.red_01";
 
+        [Header("Category")]
+        [SerializeField]
+        private CrackerCategoryDefinition category;
+
+        public CrackerCategoryDefinition Category => category;
+
         public string CrackerId => crackerId;
 
         public GameObject BlastEffectPrefab => blastEffectPrefab;
