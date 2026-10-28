@@ -49,6 +49,8 @@ namespace DiwaliTown.UI
         [SerializeField] private TMP_Text previewFeedbackText;
         [Tooltip("Hide the cracker model while its preview blast effect plays, then show it again.")]
         [SerializeField] private bool hideModelDuringBlast = true;
+        [Tooltip("Layer rendered by the dedicated preview camera. If this layer does not exist, the model prefab's root layer is used.")]
+        [SerializeField] private string previewLayerName = "cracker";
 
         [Header("Preview Models")]
         [SerializeField] private PreviewEntry[] previewEntries;
@@ -169,9 +171,31 @@ namespace DiwaliTown.UI
             currentModelInstance.transform.localRotation = Quaternion.Euler(currentEntry.modelLocalEulerAngles);
             currentModelInstance.transform.localScale = currentEntry.modelLocalScale;
 
+            // Imported models sometimes have child renderers on Default even when the
+            // preview camera only renders the dedicated "cracker" layer. Normalize the
+            // whole model hierarchy to the preview layer and enable its visual renderers.
+            currentModelInstance.SetActive(true);
+            int modelPreviewLayer = ResolvePreviewLayer(currentModelInstance.layer);
+            SetLayerRecursively(currentModelInstance, modelPreviewLayer);
+            PreparePreviewRenderers(currentModelInstance);
+
             // Preview prefabs should ideally contain visuals only. Disable common gameplay
             // components on the spawned copy as an additional safeguard.
             DisableGameplayComponentsOnPreviewCopy(currentModelInstance);
+
+            Renderer[] renderers = currentModelInstance.GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0)
+            {
+                Debug.LogWarning(
+                    $"[CrackerPreviewController] Preview model '{currentEntry.modelPrefab.name}' has no Renderer components. Check that its mesh/line renderer exists on the prefab.",
+                    currentModelInstance);
+            }
+            else
+            {
+                Debug.Log(
+                    $"[CrackerPreviewController] Loaded '{definition.DisplayName}' with {renderers.Length} renderer(s) on layer '{LayerMask.LayerToName(modelPreviewLayer)}'.",
+                    currentModelInstance);
+            }
 
             SetFeedback($"Previewing {definition.DisplayName}. Drag to rotate.");
             RefreshBlastButton();
@@ -212,12 +236,15 @@ namespace DiwaliTown.UI
             currentEffectInstance.transform.localPosition = currentEntry.blastLocalPosition;
             currentEffectInstance.transform.localRotation = Quaternion.Euler(currentEntry.blastLocalEulerAngles);
             currentEffectInstance.transform.localScale = currentEntry.blastEffectPrefab.transform.localScale;
+            // Some imported VFX prefabs are saved inactive. An inactive root prevents
+            // otherwise-active child Particle Systems from being rendered or simulated.
+            currentEffectInstance.SetActive(true);
 
-            // Preview cameras are often restricted to the model's layer. Put the
-            // VFX hierarchy on that same layer so it is visible in the RenderTexture.
-            int previewLayer = currentModelInstance != null
+            // Preview cameras are often restricted to a dedicated layer. Use the same
+            // resolved layer for every VFX child so nested renderers are not culled.
+            int previewLayer = ResolvePreviewLayer(currentModelInstance != null
                 ? currentModelInstance.layer
-                : previewModelPivot.gameObject.layer;
+                : previewModelPivot.gameObject.layer);
             SetLayerRecursively(currentEffectInstance, previewLayer);
 
             bool startedVisualEffect = PlayAllPreviewEffects(currentEffectInstance);
@@ -295,6 +322,45 @@ namespace DiwaliTown.UI
             }
 
             return startedAny;
+        }
+
+
+        private int ResolvePreviewLayer(int fallbackLayer)
+        {
+            if (!string.IsNullOrWhiteSpace(previewLayerName))
+            {
+                int configuredLayer = LayerMask.NameToLayer(previewLayerName);
+                if (configuredLayer >= 0)
+                    return configuredLayer;
+            }
+
+            return fallbackLayer;
+        }
+
+        private static void PreparePreviewRenderers(GameObject modelRoot)
+        {
+            Renderer[] renderers = modelRoot.GetComponentsInChildren<Renderer>(true);
+            foreach (Renderer renderer in renderers)
+            {
+                if (renderer == null)
+                    continue;
+
+                // Activate the renderer's object and any inactive ancestors between it
+                // and the preview root. This is confined to the preview model instance.
+                Transform current = renderer.transform;
+                while (current != null)
+                {
+                    if (!current.gameObject.activeSelf)
+                        current.gameObject.SetActive(true);
+
+                    if (current == modelRoot.transform)
+                        break;
+
+                    current = current.parent;
+                }
+
+                renderer.enabled = true;
+            }
         }
 
         private static void SetLayerRecursively(GameObject target, int layer)

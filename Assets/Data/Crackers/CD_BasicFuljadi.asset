@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3b33e36bb92590442825d7bdfd2aa9f0, type: 3}
+  m_Name: CD_BasicFuljadi
+  m_EditorClassIdentifier: Assembly-CSharp::DiwaliTown.Crackers.CrackerDefinition
+  displayName: Basic Fuljadi
+  previewIcon: {fileID: 21300000, guid: 795ada36928136c48977b17c7cfd81ca, type: 3}
+  unitPrice: 2
+  placeablePrefab: {fileID: 2219771533212901957, guid: 8cc3a7a3d485ec94b84a22633e83b3b4, type: 3}
+  placementPreviewPrefab: {fileID: 2219771533212901957, guid: 578174b34aaf0244b83aef3a9655621f, type: 3}
+  blastEffectPrefab: {fileID: 2504214343621411470, guid: 3ed0d324122d7b24eaec75c55c74aafc, type: 3}
+  blastEffectLifetime: 2
+  crackerId: cracker.fountain.fuljadi.basic_01
+  category: {fileID: 11400000, guid: 107c54ab897dca2418733e34e4e4bc5b, type: 2}
+  purchaseBatchSize: 10
+  blastReward: 4

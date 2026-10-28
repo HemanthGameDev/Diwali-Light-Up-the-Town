@@ -8976,6 +8976,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::DiwaliTown.UI.CrackerCatalogUI
   crackerDefinitions:
   - {fileID: 11400000, guid: d487f82284663974bbee2daeed7339b3, type: 2}
+  - {fileID: 11400000, guid: 574539ce8d736214d9c5834722fbcb6e, type: 2}
   categories:
   - {fileID: 11400000, guid: ae09378ba07829a4e83dced1000e326c, type: 2}
   - {fileID: 11400000, guid: 107c54ab897dca2418733e34e4e4bc5b, type: 2}
@@ -9598,8 +9599,7 @@ Transform:
   m_LocalPosition: {x: -11.57, y: 14.9, z: -0.545}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children:
-  - {fileID: 6804979589575638168}
+  m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &982996210
@@ -9791,6 +9791,7 @@ MonoBehaviour:
   basicCracker: {fileID: 11400000, guid: d487f82284663974bbee2daeed7339b3, type: 2}
   unlockRules:
   - {fileID: 11400000, guid: 2bc5322d5d5d58f4c92457d4ba023b9a, type: 2}
+  - {fileID: 11400000, guid: c17b443fb9fab5e49a11b5d0c749fbe4, type: 2}
 --- !u!114 &986913068
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -12669,6 +12670,7 @@ MonoBehaviour:
   previewBlastButton: {fileID: 1415244923}
   previewFeedbackText: {fileID: 0}
   hideModelDuringBlast: 1
+  previewLayerName: cracker
   previewEntries:
   - definition: {fileID: 11400000, guid: d487f82284663974bbee2daeed7339b3, type: 2}
     modelPrefab: {fileID: 2491969790024881672, guid: f809f5def251d8c41814af46f608a91c, type: 3}
@@ -12678,7 +12680,16 @@ MonoBehaviour:
     modelLocalScale: {x: 0.15, y: 0.15, z: 0.15}
     blastLocalPosition: {x: 0, y: 0, z: 0}
     blastLocalEulerAngles: {x: 0, y: 0, z: 0}
-    blastEffectLifetime: 4
+    blastEffectLifetime: 2
+  - definition: {fileID: 11400000, guid: 574539ce8d736214d9c5834722fbcb6e, type: 2}
+    modelPrefab: {fileID: 2219771533212901957, guid: e0cbbcf38b8afec42bc532a01b58fa6b, type: 3}
+    blastEffectPrefab: {fileID: 2504214343621411470, guid: bd88a671a55ffe54f9a8b796026abddd, type: 3}
+    modelLocalPosition: {x: 0, y: 0, z: 0}
+    modelLocalEulerAngles: {x: -25.66, y: 128.26, z: 0}
+    modelLocalScale: {x: 0.2, y: 0.2, z: 0.2}
+    blastLocalPosition: {x: 0, y: 0, z: 0}
+    blastLocalEulerAngles: {x: 0, y: 0, z: 0}
+    blastEffectLifetime: 2
 --- !u!1 &1586406152
 GameObject:
   m_ObjectHideFlags: 0
@@ -12732,6 +12743,7 @@ MonoBehaviour:
   crackerPlacementController: {fileID: 986913068}
   knownCrackerDefinitions:
   - {fileID: 11400000, guid: d487f82284663974bbee2daeed7339b3, type: 2}
+  - {fileID: 11400000, guid: 574539ce8d736214d9c5834722fbcb6e, type: 2}
   logSaveOperations: 1
 --- !u!1 &1606632660
 GameObject:
@@ -16178,76 +16190,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4b8b28f7ab8019f48a9b31d878b36400, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DiwaliTown.Diyas.DiyaAnchor
---- !u!1001 &5668541319805014088
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 979458279}
-    m_Modifications:
-    - target: {fileID: 2491969790024881672, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_Name
-      value: PF_BasicCracker_Preview
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalScale.y
-      value: 0.15000002
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalScale.z
-      value: 0.15000002
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 0.425437
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: -0.09689122
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0.8773216
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0.19980575
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: -25.66
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 128.26
-      objectReference: {fileID: 0}
-    - target: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: f809f5def251d8c41814af46f608a91c, type: 3}
---- !u!4 &6804979589575638168 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 3955232764956676602, guid: f809f5def251d8c41814af46f608a91c, type: 3}
-  m_PrefabInstance: {fileID: 5668541319805014088}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
