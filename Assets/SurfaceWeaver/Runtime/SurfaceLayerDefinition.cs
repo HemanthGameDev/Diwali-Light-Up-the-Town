@@ -4,8 +4,7 @@ using UnityEngine;
 namespace HemanthGameDev.SurfaceWeaver.Runtime
 {
     /// <summary>
-    /// Data for a single surface material layer. The base layer does not use a mask;
-    /// overlay layers reference a mask page and one of its RGBA channels.
+    /// Data for one overlay surface. Each layer reads one channel from a packed RGBA mask page.
     /// </summary>
     [Serializable]
     public sealed class SurfaceLayerDefinition
@@ -49,5 +48,12 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         }
 
         public void SetDisplayName(string value) => displayName = value;
+
+        /// <summary>Assigns a unique packed RGBA location for this layer.</summary>
+        public void SetMaskAddress(int pageIndex, SurfaceMaskChannel channel)
+        {
+            maskPageIndex = Mathf.Max(0, pageIndex);
+            maskChannel = channel;
+        }
     }
 }

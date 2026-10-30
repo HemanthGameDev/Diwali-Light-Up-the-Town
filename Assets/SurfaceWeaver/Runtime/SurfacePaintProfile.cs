@@ -25,7 +25,7 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         [Header("Mask Storage")]
         [SerializeField] private SurfaceMaskStorageMode maskStorageMode =
             SurfaceMaskStorageMode.PackedRgbaPages;
-        [SerializeField, Range(128, 8192)] private int maskResolution = 1024;
+        [SerializeField, Range(128, 4096)] private int maskResolution = 1024;
         [SerializeField] private List<Texture2D> maskPages = new List<Texture2D>();
 
         public Texture2D BaseAlbedo => baseAlbedo;
@@ -41,7 +41,26 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
             if (paintLayers == null)
                 paintLayers = new List<SurfaceLayerDefinition>();
 
-            paintLayers.Add(new SurfaceLayerDefinition(layerName));
+            HashSet<int> usedAddresses = new HashSet<int>();
+            for (int i = 0; i < paintLayers.Count; i++)
+            {
+                SurfaceLayerDefinition existing = paintLayers[i];
+                if (existing == null)
+                    continue;
+                int address = existing.MaskPageIndex * 4 + (int)existing.MaskChannel;
+                usedAddresses.Add(address);
+            }
+
+            int nextAddress = 0;
+            while (usedAddresses.Contains(nextAddress))
+                nextAddress++;
+
+            int pageIndex = nextAddress / 4;
+            SurfaceMaskChannel channel = (SurfaceMaskChannel)(nextAddress % 4);
+            SurfaceLayerDefinition layer = new SurfaceLayerDefinition(layerName);
+            layer.SetMaskAddress(pageIndex, channel);
+            paintLayers.Add(layer);
+            EnsureMaskPageSlots(pageIndex + 1);
         }
 
         public bool RemoveLayerAt(int index)
@@ -61,18 +80,40 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
             return maskPages[index];
         }
 
-        private void OnValidate()
+        /// <summary>Ensures the serialized page list has at least the requested number of slots.</summary>
+        public void EnsureMaskPageSlots(int count)
         {
-            if (paintLayers == null)
+            if (maskPages == null)
+                maskPages = new List<Texture2D>();
+
+            while (maskPages.Count < Mathf.Max(0, count))
+                maskPages.Add(null);
+        }
+
+        /// <summary>Assigns a persistent texture asset to a packed mask page.</summary>
+        public void SetMaskPage(int index, Texture2D texture)
+        {
+            if (index < 0)
                 return;
 
-            for (int i = 0; i < paintLayers.Count; i++)
+            EnsureMaskPageSlots(index + 1);
+            maskPages[index] = texture;
+        }
+
+        private void OnValidate()
+        {
+            if (paintLayers != null)
             {
-                if (paintLayers[i] != null)
-                    paintLayers[i].EnsureId();
+                for (int i = 0; i < paintLayers.Count; i++)
+                {
+                    if (paintLayers[i] != null)
+                        paintLayers[i].EnsureId();
+                }
             }
 
-            maskResolution = Mathf.Clamp(maskResolution, 128, 8192);
+            // 4096 is the supported upper bound for the current two-buffer RGBA32 editor painter.
+            // An 8192 page would require roughly 512 MiB for the two GPU buffers alone.
+            maskResolution = Mathf.Clamp(maskResolution, 128, 4096);
         }
     }
 }

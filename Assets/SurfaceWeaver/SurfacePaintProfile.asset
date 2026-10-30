@@ -12,10 +12,20 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7bfe15ae1575925c6859475229a4525e, type: 3}
   m_Name: SurfacePaintProfile
   m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Runtime::HemanthGameDev.SurfaceWeaver.Runtime.SurfacePaintProfile
-  baseAlbedo: {fileID: 0}
+  baseAlbedo: {fileID: 2800000, guid: 1ec2cef6eefb69049bcdf6ec11cb0407, type: 3}
   baseTint: {r: 1, g: 1, b: 1, a: 1}
   baseTiling: {x: 1, y: 1}
-  paintLayers: []
+  paintLayers:
+  - id: 71b916c3592346258a0ce4811c56d4e0
+    displayName: Dirt
+    albedoTexture: {fileID: 2800000, guid: d749316937bd7f34ea241e504a1994a9, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 0}
+    tiling: {x: 1, y: 1}
+    opacity: 1
+    maskPageIndex: 0
+    maskChannel: 0
+    enabled: 1
   maskStorageMode: 0
   maskResolution: 1024
-  maskPages: []
+  maskPages:
+  - {fileID: 2800000, guid: e26ddfa643a3b0b4ab79176f24a292d6, type: 3}

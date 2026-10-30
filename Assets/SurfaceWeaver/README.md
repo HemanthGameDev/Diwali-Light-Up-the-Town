@@ -1,44 +1,63 @@
-# SurfaceWeaver – Starter Foundation
+# SurfaceWeaver
 
-**Working product name:** SurfaceWeaver (provisional; perform a name/trademark search before public release).
+**Custom-mesh surface authoring for Unity URP.**
 
-SurfaceWeaver is a URP-first editor tool concept for authoring layered surfaces on static custom meshes. The planned workflow is designed around reusable surface profiles, UV diagnostics, editor painting and baked mask textures for game-ready materials.
+SurfaceWeaver is an Editor-first tool for authoring painted material masks on custom meshes (for example, Blender-exported environment meshes). The current development build includes target setup, initial UV diagnostics, Scene View picking, world-space brush preview, GPU paint/erase stamping and PNG mask persistence.
 
-> This download is an early development build, not a finished painter and not an Asset Store submission. Version 0.2.0 includes target/profile data, first-pass UV diagnostics, target-specific Scene View picking, UV0 readout and a world-space brush footprint. Painting, GPU stamping, mask persistence, Undo/Redo and the production URP shader are still future milestones.
+## Current version
 
-## Install into a project
+`0.3.0` - first GPU brush engine implementation.
 
-1. Back up the Unity project.
-2. Copy the `Assets/SurfaceWeaver` folder into the project's `Assets` folder.
-3. Let Unity compile the two assembly definitions.
-4. Open **Window > SurfaceWeaver > Painter**.
-5. Select a GameObject that has a `MeshFilter` and `MeshRenderer`.
-6. Click **Add Target Component to Selected Mesh**.
-7. Click **Create Profile**, assign the profile to the target, and add surface layers.
-8. Click **Validate UV Channel** to run the first-pass UV checks.
+## Requirements
 
-## Current contents
+- Unity 6 (6000.0 series) project.
+- Universal Render Pipeline project for the intended rendering workflow.
+- A GameObject with `MeshFilter` and `MeshRenderer`.
+- UV0 on the mesh.
+- Read/Write enabled on imported meshes while using MeshCollider UV picking.
+- A saved `SurfacePaintProfile` asset.
 
-- Runtime data types for paint operations, mask channels and brush settings.
-- `SurfacePaintProfile` ScriptableObject for base surface data, overlay layers and mask-page references.
-- `SurfacePaintTarget` component for static `MeshFilter` + `MeshRenderer` targets.
-- `SurfaceBrushPreset` ScriptableObject for custom brush alpha and default settings.
-- Editor window for target setup, profile editing and UV diagnostics.
-- UV validation for missing/invalid UVs, out-of-range coordinates and degenerate UV triangles.
-- Scene View target-specific ray picking using the assigned non-convex MeshCollider.
-- World-space circular brush footprint aligned to the hit surface normal.
-- Live UV0, world position, world normal and triangle-index readout.
-- Editor action to add or refresh the target MeshCollider.
+## Quick start
+
+1. Import `Assets/SurfaceWeaver` into the Unity project.
+2. Open **Window > SurfaceWeaver > Painter**.
+3. Assign a custom mesh target and add `SurfacePaintTarget` if required.
+4. Add/refresh a non-convex `MeshCollider`.
+5. Create or assign a `SurfacePaintProfile`.
+6. Set Mask Storage to **Packed RGBA Pages**.
+7. Add a painted surface layer. New layers are assigned four-per-page (R, G, B, A).
+8. Create a black mask page for the selected layer.
+9. Set **Preview Shader Property** to a texture property exposed by the target material (default `_PaintMask`).
+10. Load the mask page, then paint or erase by holding the left mouse button over the target in Scene View.
+11. Click **Save Mask PNG** to persist the mask as a project asset and reference it from the profile.
+
+## GPU painting details
+
+- Painting uses two RenderTextures and alternates read/write targets after each stamp.
+- Do not use the same RenderTexture as both source and destination.
+- Mask pages use linear RGBA32 data; each overlay layer reads/writes only its assigned channel.
+- A world-space brush radius is mapped to an elliptical UV stamp using the hit triangle's UV0-to-world basis. This keeps the footprint approximately circular in world space under non-uniform UV scale and transformed meshes.
+- Strokes are interpolated by world-space distance to reduce gaps between stamps. UV jumps are treated as likely seam crossings and break interpolation rather than drawing a long unintended line.
+- Optional brush alpha samples the brush texture red channel. White paints; black does not paint.
+- GPU readback occurs only when saving the PNG, not for every brush stamp.
 
 ## Current limitations
 
-- Scene View interaction is preview-only; no painting yet.
-- Picking currently reads UV0 only through `RaycastHit.textureCoord`.
-- No GPU stamping backend yet.
-- No mask PNG import/export yet.
-- No UV-island overlap detection or seam dilation yet.
-- Static mesh targets only (`MeshFilter` + `MeshRenderer`); skinned meshes are not currently supported.
-- The initial shader/material binding is not included yet.
-- UV0 validation is a first-pass check; it does not prove that an arbitrary UV layout is paint-safe.
+- UV0 only; additional UV channels are not supported by MeshCollider textureCoord in this build.
+- Packed RGBA Pages are supported; Separate Textures is not supported by the current GPU painter.
+- One selected mesh target is painted at a time.
+- Live preview requires a texture property on the target shader; `_PaintMask` is the default. The full profile-driven multi-layer URP surface shader is a later milestone.
+- Undo/Redo is not implemented in 0.3.0. Save changes before closing or switching the active page.
+- UV overlap detection and padding/seam analysis are not implemented yet.
+- Smoothing, fill, scatter, jitter, spline painting and multi-object batch painting are future work.
 
-See `Documentation/Architecture.md`, `Documentation/Development_Roadmap.md` and `Documentation/Scene_Preview_and_UV_Picking.md` before extending the code. See `CHANGELOG.md` for version history.
+## Package layout
+
+- `Runtime/` - profile, target, layer and brush data types.
+- `Editor/` - painter window, mesh picking, UV metric, GPU session, mask asset persistence and diagnostics.
+- `Editor/Shaders/` - hidden GPU brush-stamp shader used by the Editor.
+- `Documentation/` - architecture, roadmap and manual testing instructions.
+
+## Status
+
+This is a development build. It has not yet been compiled or exercised in the consumer's Unity Editor. Test it in a backup project and check the Unity Console before using it on production assets.
