@@ -6,7 +6,7 @@ SurfaceWeaver is an Editor-first tool for authoring painted material masks on cu
 
 ## Current version
 
-`0.3.0` - first GPU brush engine implementation.
+`0.4.0` - GPU brush engine with bounded session Undo/Redo and a generated starter brush library.
 
 ## Requirements
 
@@ -47,9 +47,9 @@ SurfaceWeaver is an Editor-first tool for authoring painted material masks on cu
 - Packed RGBA Pages are supported; Separate Textures is not supported by the current GPU painter.
 - One selected mesh target is painted at a time.
 - Live preview requires a texture property on the target shader; `_PaintMask` is the default. The full profile-driven multi-layer URP surface shader is a later milestone.
-- Undo/Redo is not implemented in 0.3.0. Save changes before closing or switching the active page.
+- Undo/Redo uses session-only full-page GPU snapshots and is cleared when the page is reloaded or the Painter window closes. Save Mask PNG to persist the page. Configure the history memory budget for the current resolution.
 - UV overlap detection and padding/seam analysis are not implemented yet.
-- Smoothing, fill, scatter, jitter, spline painting and multi-object batch painting are future work.
+- Scatter-style alpha presets are included, but object/vegetation scattering is not implemented. Smoothing, fill, spline painting, overlap-aware seam continuation and multi-object batch painting are future work.
 
 ## Package layout
 
@@ -61,3 +61,15 @@ SurfaceWeaver is an Editor-first tool for authoring painted material masks on cu
 ## Status
 
 This is a development build. It has not yet been compiled or exercised in the consumer's Unity Editor. Test it in a backup project and check the Unity Console before using it on production assets.
+
+
+## v0.4.0: Undo/Redo and brush library
+
+- Per-stroke GPU RenderTexture snapshots for Undo/Redo.
+- Adjustable session history memory budget.
+- Escape cancels the active stroke.
+- Starter brush generator (Soft Round, Hard Round, Grunge, Scatter).
+- Custom preset scale jitter and random rotation.
+- See `Documentation/Build_Notes_v0.4.md`, `Documentation/Manual_Test_Plan_v0.4.md` and `Documentation/Brush_Library.md`.
+
+Undo/Redo history is session-only. Save Mask PNG to persist the current mask page.

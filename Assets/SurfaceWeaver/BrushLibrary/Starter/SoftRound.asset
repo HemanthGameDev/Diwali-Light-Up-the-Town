@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c5ae00c9dc7bf6bf5be30e010daa81db, type: 3}
+  m_Name: SoftRound
+  m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Runtime::HemanthGameDev.SurfaceWeaver.Runtime.SurfaceBrushPreset
+  displayName: Soft Round
+  alphaTexture: {fileID: 2800000, guid: 6047583c934658e4896ad330d96eba9f, type: 3}
+  defaults:
+    RadiusWorldUnits: 2
+    Opacity: 0.25
+    Hardness: 0.15
+    Spacing: 0.2
+    Jitter: 0
+  randomRotation: 0
+  scaleJitter: 0

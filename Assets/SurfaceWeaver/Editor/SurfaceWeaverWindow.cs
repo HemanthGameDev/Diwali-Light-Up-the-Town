@@ -21,6 +21,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private float brushHardness = 0.2f;
         private float brushSpacing = 0.25f;
         private float brushRotation;
+        private float brushScaleJitter;
+        private int undoMemoryBudgetMb = 64;
         private Color previewColor = new Color(1f, 0.65f, 0.12f, 0.95f);
         private Texture2D directBrushAlpha;
         private SurfaceBrushPreset brushPreset;
@@ -44,6 +46,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private bool hasPreviousPaintHit;
         private SurfaceSceneHit previousPaintHit;
         private bool hasUnsavedChanges;
+        private bool hasUnsavedChangesBeforeStroke;
         private string paintStatus = "Create or load a mask page to begin painting.";
 
         [MenuItem("Window/SurfaceWeaver/Painter", false, 2100)]
@@ -414,6 +417,27 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUI.BeginChangeCheck();
             SurfaceBrushPreset newBrushPreset = (SurfaceBrushPreset)EditorGUILayout.ObjectField(
                 "Brush Preset", brushPreset, typeof(SurfaceBrushPreset), false);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Create Starter Brush Library"))
+                {
+                    SurfaceBrushPreset createdPreset = SurfaceBrushPresetFactory.CreateStarterBrushLibrary();
+                    if (createdPreset != null)
+                        newBrushPreset = createdPreset;
+                }
+                if (GUILayout.Button("Select Brush Asset"))
+                {
+                    string selectedPath = EditorUtility.OpenFilePanel(
+                        "Select SurfaceWeaver Brush Preset", Application.dataPath, "asset");
+                    if (!string.IsNullOrEmpty(selectedPath) && selectedPath.StartsWith(Application.dataPath, StringComparison.Ordinal))
+                    {
+                        string assetPath = "Assets" + selectedPath.Substring(Application.dataPath.Length).Replace('\\', '/');
+                        SurfaceBrushPreset selectedBrush = AssetDatabase.LoadAssetAtPath<SurfaceBrushPreset>(assetPath);
+                        if (selectedBrush != null)
+                            newBrushPreset = selectedBrush;
+                    }
+                }
+            }
             directBrushAlpha = (Texture2D)EditorGUILayout.ObjectField(
                 "Brush Alpha Override", directBrushAlpha, typeof(Texture2D), false);
             operationToolbar = GUILayout.Toolbar(operationToolbar, new[] { "Paint", "Erase" });
@@ -423,6 +447,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             brushHardness = EditorGUILayout.Slider("Hardness", brushHardness, 0f, 1f);
             brushSpacing = EditorGUILayout.Slider("Spacing (Diameter)", brushSpacing, 0.05f, 1f);
             brushRotation = EditorGUILayout.Slider("Brush Rotation", brushRotation, 0f, 360f);
+            brushScaleJitter = EditorGUILayout.Slider("Scale Randomness", brushScaleJitter, 0f, 0.75f);
             maskPreviewProperty = EditorGUILayout.TextField("Preview Shader Property", maskPreviewProperty);
             bool brushFieldsChanged = EditorGUI.EndChangeCheck();
             if (newBrushPreset != brushPreset)
@@ -435,10 +460,16 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     brushOpacity = defaults.Opacity;
                     brushHardness = defaults.Hardness;
                     brushSpacing = Mathf.Clamp(defaults.Spacing, 0.05f, 1f);
+                    brushScaleJitter = brushPreset.ScaleJitter;
                 }
             }
             if (brushFieldsChanged)
                 SceneView.RepaintAll();
+
+            undoMemoryBudgetMb = EditorGUILayout.IntSlider(
+                "Undo Memory Budget (MB)", undoMemoryBudgetMb, 16, 256);
+            if (gpuEngine != null && gpuEngine.IsInitialized)
+                gpuEngine.SetHistoryBudgetMegabytes(undoMemoryBudgetMb);
 
             if (profile.MaskResolution >= 3072)
             {
@@ -490,15 +521,42 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    if (GUILayout.Button("Clear Selected Layer Channel") &&
-                        EditorUtility.DisplayDialog("Clear Layer Mask", "Clear only the selected layer channel? Other channels on this page will be preserved.", "Clear", "Cancel"))
+                    using (new EditorGUI.DisabledScope(!gpuEngine.CanUndo || isPainting))
                     {
+                        if (GUILayout.Button("Undo"))
+                            UndoPaintStroke();
+                    }
+                    using (new EditorGUI.DisabledScope(!gpuEngine.CanRedo || isPainting))
+                    {
+                        if (GUILayout.Button("Redo"))
+                            RedoPaintStroke();
+                    }
+                    GUILayout.Label("Undo " + gpuEngine.UndoCount + " / Redo " + gpuEngine.RedoCount,
+                        GUILayout.Width(112f));
+                }
+                EditorGUILayout.LabelField("History memory", FormatBytes(gpuEngine.HistoryMemoryBytes));
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (GUILayout.Button("Clear Selected Layer Channel") &&
+                        EditorUtility.DisplayDialog("Clear Layer Mask", "Clear only the selected layer channel? Other channels on this page will be preserved. This can be undone.", "Clear", "Cancel"))
+                    {
+                        StopStroke();
                         string error;
-                        if (gpuEngine.ClearChannel((int)layer.MaskChannel, out error))
+                        if (gpuEngine.BeginStroke(out error))
                         {
-                            hasUnsavedChanges = true;
-                            BindWorkingMaskPreview();
-                            paintStatus = "Selected layer channel cleared. Save the mask page to persist it.";
+                            if (gpuEngine.ClearChannel((int)layer.MaskChannel, out error))
+                            {
+                                gpuEngine.EndStroke();
+                                hasUnsavedChanges = true;
+                                BindWorkingMaskPreview();
+                                paintStatus = "Selected layer channel cleared. Undo is available until the session is closed.";
+                            }
+                            else
+                            {
+                                gpuEngine.CancelStroke(out _);
+                                paintStatus = error;
+                            }
                         }
                         else
                         {
@@ -510,7 +568,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             EditorGUILayout.HelpBox(
                 "Hold the left mouse button over the target in Scene View to paint. Hold Alt for normal Scene View navigation. " +
-                "Paint writes white into the selected channel; Erase writes black. Save Mask PNG to persist changes.",
+                "Paint writes white into the selected channel; Erase writes black. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y (or Shift+Z) redoes. Save Mask PNG to persist changes.",
                 MessageType.Info);
             EditorGUILayout.LabelField("Painting Status", paintStatus);
 
@@ -665,7 +723,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             else
             {
                 float worldDistance = Vector3.Distance(previousPaintHit.Point, currentHit.Point);
-                float spacingDistance = Mathf.Max(0.01f, brushRadius * 2f * brushSpacing);
+                float spacingDistance = Mathf.Max(
+                    0.01f,
+                    brushRadius * (1f + brushScaleJitter) * 2f * brushSpacing);
                 int steps = Mathf.Clamp(Mathf.CeilToInt(worldDistance / spacingDistance), 1, 256);
 
                 for (int i = 1; i <= steps; i++)
@@ -698,12 +758,16 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (brushPreset != null && brushPreset.RandomRotation)
                 rotation = UnityEngine.Random.Range(0f, 360f);
 
+            float stampRadius = brushRadius;
+            if (brushScaleJitter > 0f)
+                stampRadius *= UnityEngine.Random.Range(1f - brushScaleJitter, 1f + brushScaleJitter);
+
             string error;
             if (!gpuEngine.Stamp(
                     uv,
                     worldPerUvU,
                     worldPerUvV,
-                    brushRadius,
+                    stampRadius,
                     brushOpacity,
                     brushHardness,
                     (int)layer.MaskChannel,
@@ -774,7 +838,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 lastHitNormal = hit.Normal;
                 lastHitTriangle = hit.TriangleIndex;
                 sceneHitStatus = status;
-                SurfaceBrushPreview.Draw(hit, brushRadius, previewColor);
+                SurfaceBrushPreview.Draw(hit, brushRadius * (1f + brushScaleJitter), previewColor);
             }
             else
             {
@@ -785,6 +849,17 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (currentEvent.type == EventType.MouseDown &&
                 currentEvent.button == 0 && hitFound && CanPaint())
             {
+                string beginError;
+                gpuEngine.SetHistoryBudgetMegabytes(undoMemoryBudgetMb);
+                hasUnsavedChangesBeforeStroke = hasUnsavedChanges;
+                if (!gpuEngine.BeginStroke(out beginError))
+                {
+                    paintStatus = beginError;
+                    Repaint();
+                    currentEvent.Use();
+                    return;
+                }
+
                 GUIUtility.hotControl = controlId;
                 paintingControlId = controlId;
                 isPainting = true;
@@ -820,7 +895,18 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             else if (currentEvent.type == EventType.KeyDown &&
                      currentEvent.keyCode == KeyCode.Escape && isPainting)
             {
-                StopStroke();
+                CancelActiveStroke();
+                currentEvent.Use();
+            }
+            else if (currentEvent.type == EventType.KeyDown &&
+                     (currentEvent.control || currentEvent.command) && !isPainting &&
+                     (currentEvent.keyCode == KeyCode.Z || currentEvent.keyCode == KeyCode.Y) &&
+                     gpuEngine != null && gpuEngine.IsInitialized && CanPaint())
+            {
+                if (currentEvent.keyCode == KeyCode.Y || currentEvent.shift)
+                    RedoPaintStroke();
+                else
+                    UndoPaintStroke();
                 currentEvent.Use();
             }
 
@@ -857,11 +943,85 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void StopStroke()
         {
+            bool wasPainting = isPainting;
             isPainting = false;
             hasPreviousPaintHit = false;
             if (paintingControlId != 0 && GUIUtility.hotControl == paintingControlId)
                 GUIUtility.hotControl = 0;
             paintingControlId = 0;
+
+            if (wasPainting && gpuEngine != null && gpuEngine.IsInitialized)
+            {
+                gpuEngine.EndStroke();
+                paintStatus = gpuEngine.CanUndo
+                    ? "Stroke committed. Undo is available."
+                    : "Stroke finished, but no history snapshot was retained. Increase the Undo memory budget or reduce mask resolution.";
+                Repaint();
+            }
+        }
+
+        private void CancelActiveStroke()
+        {
+            bool wasPainting = isPainting;
+            isPainting = false;
+            hasPreviousPaintHit = false;
+            if (paintingControlId != 0 && GUIUtility.hotControl == paintingControlId)
+                GUIUtility.hotControl = 0;
+            paintingControlId = 0;
+
+            if (wasPainting && gpuEngine != null && gpuEngine.IsInitialized)
+            {
+                if (gpuEngine.CancelStroke(out string error))
+                {
+                    hasUnsavedChanges = hasUnsavedChangesBeforeStroke;
+                    BindWorkingMaskPreview();
+                    paintStatus = "Active stroke cancelled.";
+                }
+                else
+                {
+                    paintStatus = error;
+                }
+                Repaint();
+                SceneView.RepaintAll();
+            }
+        }
+
+        private void UndoPaintStroke()
+        {
+            if (gpuEngine == null || !gpuEngine.IsInitialized)
+                return;
+            StopStroke();
+            if (gpuEngine.UndoLastStroke(out string error))
+            {
+                hasUnsavedChanges = true;
+                BindWorkingMaskPreview();
+                paintStatus = "Last stroke undone.";
+            }
+            else
+            {
+                paintStatus = error;
+            }
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void RedoPaintStroke()
+        {
+            if (gpuEngine == null || !gpuEngine.IsInitialized)
+                return;
+            StopStroke();
+            if (gpuEngine.RedoLastStroke(out string error))
+            {
+                hasUnsavedChanges = true;
+                BindWorkingMaskPreview();
+                paintStatus = "Stroke redone.";
+            }
+            else
+            {
+                paintStatus = error;
+            }
+            Repaint();
+            SceneView.RepaintAll();
         }
 
         private void BindWorkingMaskPreview()

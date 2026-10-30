@@ -28,12 +28,166 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private RenderTexture readTexture;
         private RenderTexture writeTexture;
         private Material stampMaterial;
+        private RenderTexture pendingStrokeSnapshot;
+        private int pendingStrokeStampCount;
+        private readonly System.Collections.Generic.List<RenderTexture> undoHistory =
+            new System.Collections.Generic.List<RenderTexture>();
+        private readonly System.Collections.Generic.List<RenderTexture> redoHistory =
+            new System.Collections.Generic.List<RenderTexture>();
+        private long historyBudgetBytes = 64L * 1024L * 1024L;
         private bool initialized;
 
         public RenderTexture Current => readTexture;
         public int Width { get; private set; }
         public int Height { get; private set; }
         public bool IsInitialized => initialized && readTexture != null;
+        public bool CanUndo => undoHistory.Count > 0;
+        public bool CanRedo => redoHistory.Count > 0;
+        public int UndoCount => undoHistory.Count;
+        public int RedoCount => redoHistory.Count;
+        public long HistoryMemoryBytes =>
+            (long)(undoHistory.Count + redoHistory.Count + (pendingStrokeSnapshot != null ? 1 : 0)) *
+            Width * Height * 4L;
+
+        public void SetHistoryBudgetMegabytes(int megabytes)
+        {
+            historyBudgetBytes = Math.Max(8L * 1024L * 1024L, megabytes * 1024L * 1024L);
+            TrimHistoryToBudget();
+        }
+
+        /// <summary>Captures the pre-stroke page once. A completed stroke becomes one Undo step.</summary>
+        public bool BeginStroke(out string error)
+        {
+            error = string.Empty;
+            if (!IsInitialized)
+            {
+                error = "The mask painting session is not initialized.";
+                return false;
+            }
+
+            if (pendingStrokeSnapshot != null)
+                EndStroke();
+
+            pendingStrokeSnapshot = CreateSnapshot(readTexture, "SurfaceWeaver Pending Undo");
+            pendingStrokeStampCount = 0;
+            if (pendingStrokeSnapshot == null)
+            {
+                error = "Could not allocate an Undo snapshot. Reduce mask resolution or increase available GPU memory.";
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Commits the pending pre-stroke snapshot to the Undo history.</summary>
+        public void EndStroke()
+        {
+            if (pendingStrokeSnapshot == null)
+                return;
+
+            if (pendingStrokeStampCount <= 0)
+            {
+                ReleaseRenderTexture(ref pendingStrokeSnapshot);
+                return;
+            }
+
+            ClearHistory(redoHistory);
+            undoHistory.Add(pendingStrokeSnapshot);
+            pendingStrokeSnapshot = null;
+            pendingStrokeStampCount = 0;
+            TrimHistoryToBudget();
+        }
+
+        /// <summary>Restores the page to its state before the active stroke.</summary>
+        public bool CancelStroke(out string error)
+        {
+            error = string.Empty;
+            if (pendingStrokeSnapshot == null)
+                return true;
+
+            if (!RestoreSnapshot(pendingStrokeSnapshot, out error))
+                return false;
+
+            ReleaseRenderTexture(ref pendingStrokeSnapshot);
+            pendingStrokeStampCount = 0;
+            return true;
+        }
+
+        public bool UndoLastStroke(out string error)
+        {
+            error = string.Empty;
+            if (!IsInitialized || pendingStrokeSnapshot != null)
+            {
+                error = "Finish the active stroke before using Undo.";
+                return false;
+            }
+            if (undoHistory.Count == 0)
+            {
+                error = "There are no strokes to undo.";
+                return false;
+            }
+
+            RenderTexture redoSnapshot = CreateSnapshot(readTexture, "SurfaceWeaver Redo");
+            if (redoSnapshot == null)
+            {
+                error = "Could not allocate a Redo snapshot.";
+                return false;
+            }
+
+            int last = undoHistory.Count - 1;
+            RenderTexture previousState = undoHistory[last];
+            undoHistory.RemoveAt(last);
+
+            if (!RestoreSnapshot(previousState, out error))
+            {
+                undoHistory.Add(previousState);
+                ReleaseRenderTexture(ref redoSnapshot);
+                return false;
+            }
+
+            ReleaseRenderTexture(ref previousState);
+            redoHistory.Add(redoSnapshot);
+            TrimHistoryToBudget();
+            return true;
+        }
+
+        public bool RedoLastStroke(out string error)
+        {
+            error = string.Empty;
+            if (!IsInitialized || pendingStrokeSnapshot != null)
+            {
+                error = "Finish the active stroke before using Redo.";
+                return false;
+            }
+            if (redoHistory.Count == 0)
+            {
+                error = "There are no strokes to redo.";
+                return false;
+            }
+
+            RenderTexture undoSnapshot = CreateSnapshot(readTexture, "SurfaceWeaver Undo");
+            if (undoSnapshot == null)
+            {
+                error = "Could not allocate an Undo snapshot.";
+                return false;
+            }
+
+            int last = redoHistory.Count - 1;
+            RenderTexture nextState = redoHistory[last];
+            redoHistory.RemoveAt(last);
+
+            if (!RestoreSnapshot(nextState, out error))
+            {
+                redoHistory.Add(nextState);
+                ReleaseRenderTexture(ref undoSnapshot);
+                return false;
+            }
+
+            ReleaseRenderTexture(ref nextState);
+            undoHistory.Add(undoSnapshot);
+            TrimHistoryToBudget();
+            return true;
+        }
 
         public bool Initialize(Texture2D source, int width, int height, out string error)
         {
@@ -151,6 +305,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             try
             {
                 ExecuteBlit();
+                if (pendingStrokeSnapshot != null)
+                    pendingStrokeStampCount++;
                 return true;
             }
             catch (Exception exception)
@@ -182,6 +338,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             try
             {
                 ExecuteBlit();
+                if (pendingStrokeSnapshot != null)
+                    pendingStrokeStampCount++;
                 return true;
             }
             catch (Exception exception)
@@ -237,6 +395,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         public void Dispose()
         {
             initialized = false;
+            ReleaseRenderTexture(ref pendingStrokeSnapshot);
+            pendingStrokeStampCount = 0;
+            ClearHistory(undoHistory);
+            ClearHistory(redoHistory);
             ReleaseRenderTexture(ref readTexture);
             ReleaseRenderTexture(ref writeTexture);
 
@@ -251,6 +413,106 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             Width = 0;
             Height = 0;
+        }
+
+        private RenderTexture CreateSnapshot(RenderTexture source, string textureName)
+        {
+            if (source == null)
+                return null;
+
+            RenderTexture snapshot = CreateRenderTexture(
+                source.width,
+                source.height,
+                textureName);
+            if (snapshot == null)
+                return null;
+
+            try
+            {
+                Blit(source, snapshot);
+                return snapshot;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError("SurfaceWeaver snapshot failed: " + exception.Message);
+                ReleaseRenderTexture(ref snapshot);
+                return null;
+            }
+        }
+
+        private bool RestoreSnapshot(RenderTexture snapshot, out string error)
+        {
+            error = string.Empty;
+            if (snapshot == null || readTexture == null || writeTexture == null)
+            {
+                error = "Cannot restore an invalid mask history snapshot.";
+                return false;
+            }
+
+            try
+            {
+                Blit(snapshot, readTexture);
+                Blit(snapshot, writeTexture);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "Could not restore mask history: " + exception.Message;
+                return false;
+            }
+        }
+
+        private static void Blit(Texture source, RenderTexture destination)
+        {
+            RenderTexture previousActive = RenderTexture.active;
+            bool previousSrgbWrite = GL.sRGBWrite;
+            try
+            {
+                GL.sRGBWrite = false;
+                Graphics.Blit(source, destination);
+            }
+            finally
+            {
+                GL.sRGBWrite = previousSrgbWrite;
+                RenderTexture.active = previousActive;
+            }
+        }
+
+        private void TrimHistoryToBudget()
+        {
+            long bytesPerSnapshot = (long)Width * Height * 4L;
+            if (bytesPerSnapshot <= 0)
+                return;
+
+            while ((long)(undoHistory.Count + redoHistory.Count) * bytesPerSnapshot > historyBudgetBytes)
+            {
+                if (undoHistory.Count > 0)
+                {
+                    RenderTexture oldest = undoHistory[0];
+                    undoHistory.RemoveAt(0);
+                    ReleaseRenderTexture(ref oldest);
+                }
+                else if (redoHistory.Count > 0)
+                {
+                    RenderTexture oldest = redoHistory[0];
+                    redoHistory.RemoveAt(0);
+                    ReleaseRenderTexture(ref oldest);
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+
+        private static void ClearHistory(System.Collections.Generic.List<RenderTexture> history)
+        {
+            for (int i = 0; i < history.Count; i++)
+            {
+                RenderTexture snapshot = history[i];
+                ReleaseRenderTexture(ref snapshot);
+            }
+            history.Clear();
         }
 
         private void ExecuteBlit()

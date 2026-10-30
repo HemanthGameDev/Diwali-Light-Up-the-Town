@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 - Undo/Redo and Starter Brush Library
+- Added bounded, in-memory GPU mask history with per-stroke Undo and Redo snapshots.
+- Added per-stroke commit and Escape-to-cancel behavior.
+- Added Undo/Redo buttons and Ctrl/Cmd+Z, Ctrl/Cmd+Y and Ctrl/Cmd+Shift+Z shortcuts while working in Scene View.
+- Made the Clear Selected Layer Channel operation undoable.
+- Added an adjustable Undo memory budget; older snapshots are trimmed when the budget is reached.
+- Extended brush presets with randomized scale.
+- Added an Editor utility to generate Soft Round, Hard Round, Grunge and Scatter starter brush presets and their linear alpha textures.
+- Added brush-library creation and preset selection controls to the Painter window.
+- Undo history is session-only; use Save Mask PNG to persist painted results.
+
 ## 0.3.0 - GPU Brush Engine (first implementation)
 - Added a ping-pong RenderTexture GPU mask stamping backend.
 - Added paint and erase operations for one selected channel in a packed RGBA page.
@@ -9,7 +20,6 @@
 - Added black mask-page PNG creation, GPU readback, PNG persistence and profile references.
 - Added live preview through a configurable MaterialPropertyBlock texture property (default `_PaintMask`).
 - Added automatic page/channel assignment for newly created profile layers.
-- Undo/Redo, seam-aware island continuation, full overlap detection, smoothing/fill tools, spline painting and the production multi-layer URP surface shader remain future milestones.
 
 ## 0.2.0 - Scene View Preview
 - Added target-specific Scene View mesh picking and UV0 readout.

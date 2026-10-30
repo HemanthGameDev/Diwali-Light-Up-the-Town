@@ -15,10 +15,28 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         [SerializeField] private SurfaceBrushSettings defaults =
             SurfaceBrushSettings.Default;
         [SerializeField] private bool randomRotation;
+        [Tooltip("Randomly varies each stamp radius by this fraction. 0.2 means +/-20%.")]
+        [SerializeField, Range(0f, 0.75f)] private float scaleJitter;
 
         public string DisplayName => displayName;
         public Texture2D AlphaTexture => alphaTexture;
         public SurfaceBrushSettings Defaults => defaults;
         public bool RandomRotation => randomRotation;
+        public float ScaleJitter => scaleJitter;
+
+        /// <summary>Configures a preset. Intended for the Editor brush-library generator and custom tooling.</summary>
+        public void Configure(
+            string presetName,
+            Texture2D brushAlpha,
+            SurfaceBrushSettings brushDefaults,
+            bool rotateRandomly,
+            float randomizedScale)
+        {
+            displayName = string.IsNullOrWhiteSpace(presetName) ? "Custom Brush" : presetName;
+            alphaTexture = brushAlpha;
+            defaults = brushDefaults;
+            randomRotation = rotateRandomly;
+            scaleJitter = Mathf.Clamp(randomizedScale, 0f, 0.75f);
+        }
     }
 }
