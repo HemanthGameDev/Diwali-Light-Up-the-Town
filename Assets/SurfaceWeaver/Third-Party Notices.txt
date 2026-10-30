@@ -1,0 +1,5 @@
+SurfaceWeaver Starter Foundation – Third-Party Notices
+
+No third-party code, fonts, textures, models, audio or external libraries are intentionally included in this starter foundation.
+
+The code uses UnityEngine and UnityEditor APIs supplied by the installed Unity Editor. Any third-party packages or assets added in future releases must be documented here with the relevant component name, author and license.

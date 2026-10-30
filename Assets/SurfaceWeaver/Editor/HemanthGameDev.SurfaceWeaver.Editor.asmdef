@@ -1,0 +1,18 @@
+{
+  "name": "HemanthGameDev.SurfaceWeaver.Editor",
+  "rootNamespace": "HemanthGameDev.SurfaceWeaver.Editor",
+  "references": [
+    "HemanthGameDev.SurfaceWeaver.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

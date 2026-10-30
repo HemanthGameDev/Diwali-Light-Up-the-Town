@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7bfe15ae1575925c6859475229a4525e, type: 3}
+  m_Name: SurfacePaintProfile
+  m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Runtime::HemanthGameDev.SurfaceWeaver.Runtime.SurfacePaintProfile
+  baseAlbedo: {fileID: 0}
+  baseTint: {r: 1, g: 1, b: 1, a: 1}
+  baseTiling: {x: 1, y: 1}
+  paintLayers: []
+  maskStorageMode: 0
+  maskResolution: 1024
+  maskPages: []
