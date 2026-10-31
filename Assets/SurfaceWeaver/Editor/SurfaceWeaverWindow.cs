@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using HemanthGameDev.SurfaceWeaver.Runtime;
@@ -22,6 +23,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private float brushSpacing = 0.25f;
         private float brushRotation;
         private float brushScaleJitter;
+        private float projectionDepthScale = 0.75f;
+        // Always-on facing gate. Rejects the far side of cylinders and perpendicular caps.
+        private float surfaceNormalCutoff = 0.2f;
+        private bool randomizeSplineStamps;
+        private bool closeSplinePath;
         private int undoMemoryBudgetMb = 64;
         private Color previewColor = new Color(1f, 0.65f, 0.12f, 0.95f);
         private Texture2D directBrushAlpha;
@@ -29,6 +35,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private int operationToolbar;
         private int selectedLayerIndex;
         private string maskPreviewProperty = "_PaintMask";
+        private bool showSelectedChannelPreview = true;
+        private Material maskChannelPreviewMaterial;
+        private int cachedPreviewChannel = -1;
 
         private bool hasSceneHit;
         private Vector2 lastHitUv;
@@ -48,6 +57,15 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private bool hasUnsavedChanges;
         private bool hasUnsavedChangesBeforeStroke;
         private string paintStatus = "Create or load a mask page to begin painting.";
+
+        private SurfaceUvRasterMesh uvRasterMesh;
+        private Mesh uvRasterSourceMesh;
+        private bool pathAuthoringEnabled;
+        private bool seamAwareProjection = true;
+        private SurfacePaintPathAsset pathAsset;
+        private readonly List<SurfacePaintPathPoint> pathPoints = new List<SurfacePaintPathPoint>();
+        private string pathStatus = "Click the target mesh in Scene View to add spline anchors.";
+        private int pathRandomSeed = 1;
 
         [MenuItem("Window/SurfaceWeaver/Painter", false, 2100)]
         public static void OpenWindow()
@@ -84,6 +102,13 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             StopStroke();
             RestoreSavedMaskPreview();
             DisposePaintSession();
+            DisposeUvRasterMesh();
+            if (maskChannelPreviewMaterial != null)
+            {
+                DestroyImmediate(maskChannelPreviewMaterial);
+                maskChannelPreviewMaterial = null;
+                cachedPreviewChannel = -1;
+            }
         }
 
         private void OnSelectionChange()
@@ -108,6 +133,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             StopStroke();
             RestoreSavedMaskPreview();
             DisposePaintSession();
+            DisposeUvRasterMesh();
+            pathPoints.Clear();
+            pathAsset = null;
+            pathAuthoringEnabled = false;
             target = value;
             profile = target != null ? target.Profile : null;
             selectedLayerIndex = 0;
@@ -130,6 +159,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.Space(8f);
             DrawPaintingSection();
             EditorGUILayout.Space(8f);
+            DrawSplinePathSection();
+            EditorGUILayout.Space(8f);
             DrawDiagnosticsSection();
             EditorGUILayout.Space(8f);
             DrawRoadmapSection();
@@ -143,7 +174,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "Custom-mesh surface authoring for URP",
                 EditorStyles.miniLabel);
             EditorGUILayout.HelpBox(
-                "GPU mask painting milestone: paint or erase one packed RGBA mask channel on a custom mesh. " +
+                "Custom-mesh surface authoring with seam-aware UV raster painting, packed RGBA masks, and reusable spline path assets. " +
                 "Mask changes are saved as PNG assets referenced by the SurfacePaintProfile.",
                 MessageType.Info);
         }
@@ -440,6 +471,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
             directBrushAlpha = (Texture2D)EditorGUILayout.ObjectField(
                 "Brush Alpha Override", directBrushAlpha, typeof(Texture2D), false);
+            seamAwareProjection = EditorGUILayout.ToggleLeft(
+                "Seam-Aware Mesh Projection (recommended)", seamAwareProjection);
             operationToolbar = GUILayout.Toolbar(operationToolbar, new[] { "Paint", "Erase", "Smooth" });
             paintingEnabled = EditorGUILayout.ToggleLeft("Enable Scene View Painting", paintingEnabled);
             brushRadius = EditorGUILayout.Slider("Radius (World Units)", brushRadius, 0.05f, 20f);
@@ -448,6 +481,17 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             brushSpacing = EditorGUILayout.Slider("Spacing (Diameter)", brushSpacing, 0.05f, 1f);
             brushRotation = EditorGUILayout.Slider("Brush Rotation", brushRotation, 0f, 360f);
             brushScaleJitter = EditorGUILayout.Slider("Scale Randomness", brushScaleJitter, 0f, 0.75f);
+            if (seamAwareProjection)
+            {
+                projectionDepthScale = EditorGUILayout.Slider(
+                    "Projection Depth (x Radius)", projectionDepthScale, 0.05f, 2f);
+                surfaceNormalCutoff = EditorGUILayout.Slider(
+                    "Surface Facing Threshold", surfaceNormalCutoff, 0.05f, 0.95f);
+                EditorGUILayout.HelpBox(
+                    "The facing gate is always enabled in seam-aware mode. It prevents painting the far side of cylinders and perpendicular cap faces. " +
+                    "0.2 is a good starting point for ordinary mesh surfaces.",
+                    MessageType.None);
+            }
             maskPreviewProperty = EditorGUILayout.TextField("Preview Shader Property", maskPreviewProperty);
             bool brushFieldsChanged = EditorGUI.EndChangeCheck();
             if (newBrushPreset != brushPreset)
@@ -483,6 +527,17 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.HelpBox(
                 "Optional brush alpha uses the texture's red channel: white paints and black leaves the mask unchanged.",
                 MessageType.None);
+            EditorGUILayout.HelpBox(
+                seamAwareProjection
+                    ? "Seam-aware mode rasterizes target triangles in UV0 space and evaluates the brush in world space. Duplicated UV seam charts receive the same stamp. Raster Y is platform-adjusted while source-mask sampling retains logical UV0. Normal filtering is optional; projection depth remains active."
+                    : "Legacy UV-stamp mode is enabled. It is retained as a fallback, but strokes stop at UV discontinuities and may leave gaps across seams.",
+                MessageType.Info);
+            if (seamAwareProjection && operationToolbar == 2)
+            {
+                EditorGUILayout.HelpBox(
+                    "Smooth currently averages neighboring UV pixels and is not island-aware. Avoid smoothing directly beside tightly packed UV chart boundaries until island padding/dilation is added.",
+                    MessageType.Warning);
+            }
 
             Texture2D pageAsset = profile.GetMaskPage(layer.MaskPageIndex);
             if (pageAsset == null)
@@ -516,8 +571,19 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 long estimatedBytes = (long)gpuEngine.Width * gpuEngine.Height * 4L * 2L;
                 EditorGUILayout.LabelField("Two-buffer GPU memory", FormatBytes(estimatedBytes));
                 EditorGUILayout.LabelField("Session Status", hasUnsavedChanges ? "Unsaved changes" : "Saved / unchanged");
-                Rect previewRect = GUILayoutUtility.GetRect(100f, 100f, GUILayout.ExpandWidth(false));
-                EditorGUI.DrawPreviewTexture(previewRect, gpuEngine.Current, null, ScaleMode.ScaleToFit);
+                showSelectedChannelPreview = EditorGUILayout.ToggleLeft(
+                    "Preview selected mask channel only (grayscale)", showSelectedChannelPreview);
+                Rect previewRect = GUILayoutUtility.GetRect(128f, 128f, GUILayout.ExpandWidth(false));
+                Material previewMaterial = showSelectedChannelPreview
+                    ? GetMaskChannelPreviewMaterial((int)layer.MaskChannel)
+                    : null;
+                EditorGUI.DrawPreviewTexture(
+                    previewRect, gpuEngine.Current, previewMaterial, ScaleMode.ScaleToFit);
+                EditorGUILayout.LabelField(
+                    showSelectedChannelPreview
+                        ? "Preview: " + layer.MaskChannel + " channel (grayscale)"
+                        : "Preview: combined RGBA channels",
+                    EditorStyles.miniLabel);
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
@@ -571,6 +637,557 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     "Painting and saving will still work, but live surface preview needs a matching texture property in your shader.",
                     MessageType.Warning);
             }
+        }
+
+        private void DrawSplinePathSection()
+        {
+            EditorGUILayout.LabelField("Spline Path Painting", EditorStyles.boldLabel);
+            bool newPathMode = EditorGUILayout.ToggleLeft(
+                "Enable Path Authoring (click the mesh to add anchors)", pathAuthoringEnabled);
+            if (newPathMode != pathAuthoringEnabled)
+            {
+                StopStroke();
+                pathAuthoringEnabled = newPathMode;
+                hasPreviousPaintHit = false;
+                SceneView.RepaintAll();
+            }
+
+            EditorGUILayout.LabelField("Path Anchors", pathPoints.Count.ToString());
+            closeSplinePath = EditorGUILayout.ToggleLeft("Close Path (connect last anchor to first)", closeSplinePath);
+            randomizeSplineStamps = EditorGUILayout.ToggleLeft(
+                "Randomize brush rotation / size per path stamp", randomizeSplineStamps);
+            if (uvRasterMesh != null)
+            {
+                EditorGUILayout.LabelField("Seam-Aware Raster Triangles",
+                    uvRasterMesh.SourceTriangleCount + " source / " +
+                    (uvRasterMesh.SourceTriangleCount - uvRasterMesh.SkippedDegenerateTriangleCount) + " rasterized");
+            }
+            pathAsset = (SurfacePaintPathAsset)EditorGUILayout.ObjectField(
+                "Path Asset", pathAsset, typeof(SurfacePaintPathAsset), false);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(pathPoints.Count == 0))
+                {
+                    if (GUILayout.Button("Clear Anchors"))
+                    {
+                        pathPoints.Clear();
+                        pathRandomSeed = UnityEngine.Random.Range(1, int.MaxValue);
+                        pathStatus = "Path anchors cleared.";
+                        SceneView.RepaintAll();
+                    }
+                }
+                using (new EditorGUI.DisabledScope(pathAsset == null))
+                {
+                    if (GUILayout.Button("Load Asset Points"))
+                        LoadPathAssetPoints();
+                }
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(pathPoints.Count < 2 || target == null))
+                {
+                    if (GUILayout.Button("Save Path Asset"))
+                        SavePathAsset();
+                    if (GUILayout.Button("Apply Spline"))
+                        ApplySplinePath();
+                }
+            }
+
+            EditorGUILayout.LabelField("Path Status", pathStatus);
+            EditorGUILayout.HelpBox(
+                "Enable Path Authoring and click the target mesh to add anchors. Apply works in both modes: seam-aware projection paints matching UV charts; legacy mode paints only the hit UV chart and may show gaps at seams. " +
+                "Paths are open unless Close Path is enabled. Per-stamp randomization is off by default to keep path texture orientation stable.",
+                MessageType.Info);
+        }
+
+        private void AddPathAnchor(SurfaceSceneHit hit)
+        {
+            Matrix4x4 localToWorld = target.transform.localToWorldMatrix;
+            if (pathPoints.Count == 0)
+                pathRandomSeed = UnityEngine.Random.Range(1, int.MaxValue);
+
+            Vector3 localPosition = target.transform.InverseTransformPoint(hit.Point);
+            Vector3 localNormal = localToWorld.transpose.MultiplyVector(hit.Normal).normalized;
+            pathPoints.Add(new SurfacePaintPathPoint(localPosition, localNormal));
+            pathStatus = "Added anchor " + pathPoints.Count + ". Add more points or apply the spline.";
+            SceneView.RepaintAll();
+            Repaint();
+        }
+
+        private void SavePathAsset()
+        {
+            if (target == null || pathPoints.Count < 2)
+                return;
+
+            SurfaceLayerDefinition layer = GetSelectedLayer();
+            if (layer == null)
+            {
+                EditorUtility.DisplayDialog("SurfaceWeaver", "Select a valid paint layer before saving this path.", "OK");
+                return;
+            }
+
+            string assetPath = EditorUtility.SaveFilePanelInProject(
+                "Save SurfaceWeaver Path", "SurfacePaintPath", "asset",
+                "Choose a folder inside Assets for this reusable path asset.");
+            if (string.IsNullOrEmpty(assetPath))
+                return;
+
+            GlobalObjectId targetGlobalId = GlobalObjectId.GetGlobalObjectIdSlow(target);
+            if (targetGlobalId.identifierType == 2 &&
+                targetGlobalId.assetGUID.ToString() == "00000000000000000000000000000000")
+            {
+                EditorUtility.DisplayDialog(
+                    "Save Scene First",
+                    "Save the scene at least once before creating a reusable path asset. Unity uses the saved scene identity to resolve this target later.",
+                    "OK");
+                return;
+            }
+
+            SurfacePaintPathAsset created = CreateInstance<SurfacePaintPathAsset>();
+            created.Configure(
+                targetGlobalId.ToString(),
+                target.name,
+                pathPoints,
+                layer.Id,
+                layer.MaskPageIndex,
+                layer.MaskChannel,
+                brushRadius,
+                brushOpacity,
+                brushHardness,
+                brushSpacing,
+                operationToolbar == 1,
+                operationToolbar == 2,
+                brushPreset,
+                directBrushAlpha,
+                brushRotation,
+                brushScaleJitter,
+                closeSplinePath,
+                randomizeSplineStamps,
+                pathRandomSeed);
+
+            assetPath = AssetDatabase.GenerateUniqueAssetPath(assetPath);
+            AssetDatabase.CreateAsset(created, assetPath);
+            AssetDatabase.SaveAssets();
+            pathAsset = created;
+            EditorGUIUtility.PingObject(created);
+            pathStatus = "Path asset saved. Points are stored in target-local space.";
+        }
+
+        private void LoadPathAssetPoints()
+        {
+            SurfacePaintPathAsset source = pathAsset;
+            if (source == null)
+                return;
+
+            SurfacePaintTarget resolvedTarget = null;
+            if (!string.IsNullOrEmpty(source.TargetGlobalObjectId) &&
+                GlobalObjectId.TryParse(source.TargetGlobalObjectId, out GlobalObjectId globalId))
+            {
+                resolvedTarget = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(globalId) as SurfacePaintTarget;
+            }
+
+            if (resolvedTarget == null)
+            {
+                if (target == null)
+                {
+                    EditorUtility.DisplayDialog(
+                        "SurfaceWeaver",
+                        "The original scene target could not be resolved. Open the scene containing '" +
+                        source.TargetDisplayName + "' and select its SurfacePaintTarget, then load the path asset again.",
+                        "OK");
+                    return;
+                }
+
+                if (!EditorUtility.DisplayDialog(
+                    "Resolve Path Target",
+                    "The original scene target could not be resolved. Load these path points onto the currently selected target '" +
+                    target.name + "'? Points are stored in target-local space, so only do this when the meshes have matching layout and scale.",
+                    "Use Selected Target", "Cancel"))
+                    return;
+
+                resolvedTarget = target;
+            }
+
+            if (target != resolvedTarget)
+                SetTarget(resolvedTarget);
+
+            pathAsset = source;
+            pathPoints.Clear();
+            for (int i = 0; i < source.Points.Count; i++)
+                pathPoints.Add(source.Points[i]);
+
+            bool matchedLayer = false;
+            bool savedLayerMappingMatches = false;
+            if (profile != null && profile.PaintLayers != null)
+            {
+                for (int i = 0; i < profile.PaintLayers.Count; i++)
+                {
+                    SurfaceLayerDefinition candidate = profile.PaintLayers[i];
+                    if (candidate != null && candidate.Id == source.LayerId)
+                    {
+                        selectedLayerIndex = i;
+                        matchedLayer = true;
+                        savedLayerMappingMatches = candidate.MaskPageIndex == source.MaskPageIndex &&
+                            candidate.MaskChannel == source.MaskChannel;
+                        break;
+                    }
+                }
+            }
+
+            brushRadius = source.BrushRadius;
+            brushOpacity = source.Opacity;
+            brushHardness = source.Hardness;
+            brushSpacing = source.Spacing;
+            brushPreset = source.BrushPreset;
+            directBrushAlpha = source.BrushAlphaOverride;
+            brushRotation = source.BrushRotationDegrees;
+            brushScaleJitter = source.ScaleJitter;
+            closeSplinePath = source.ClosedLoop;
+            randomizeSplineStamps = source.RandomizePerStamp;
+            pathRandomSeed = source.RandomSeed;
+            operationToolbar = source.Smooth ? 2 : (source.Erase ? 1 : 0);
+            pathAuthoringEnabled = true;
+            pathStatus = !matchedLayer
+                ? "Loaded path points, but its saved layer ID was not found in this profile. Select the intended layer before applying."
+                : savedLayerMappingMatches
+                    ? "Loaded " + pathPoints.Count + " anchors and matching layer mapping from path asset."
+                    : "Loaded path points. The saved layer page/channel differs from the current profile; verify the selected layer and mask page before applying.";
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void ApplySplinePath()
+        {
+            SurfaceLayerDefinition layer = GetSelectedLayer();
+            if (target == null || layer == null || !layer.Enabled ||
+                !IsSessionForLayer(layer) || pathPoints.Count < 2)
+            {
+                pathStatus = "Assign a target, select an enabled layer, load its mask page, and add at least two anchors.";
+                Repaint();
+                return;
+            }
+
+            if (seamAwareProjection && !EnsureUvRasterMesh(out string rasterError))
+            {
+                pathStatus = rasterError;
+                Repaint();
+                return;
+            }
+
+            MeshCollider collider = target.GetComponent<MeshCollider>();
+            if (collider == null || collider.convex || collider.sharedMesh == null)
+            {
+                pathStatus = "A non-convex MeshCollider using the target mesh is required to apply spline paths.";
+                Repaint();
+                return;
+            }
+
+            StopStroke();
+            gpuEngine.SetHistoryBudgetMegabytes(undoMemoryBudgetMb);
+            hasUnsavedChangesBeforeStroke = hasUnsavedChanges;
+            if (!gpuEngine.BeginStroke(out string beginError))
+            {
+                pathStatus = beginError;
+                Repaint();
+                return;
+            }
+
+            bool anyStamp = false;
+            bool failed = false;
+            string failure = string.Empty;
+            float minimumJitteredRadius = brushRadius * (1f - (randomizeSplineStamps ? brushScaleJitter : 0f));
+            float spacingDistance = Mathf.Max(0.025f, minimumJitteredRadius * 2f * brushSpacing);
+            UnityEngine.Random.State previousRandomState = UnityEngine.Random.state;
+            UnityEngine.Random.InitState(pathRandomSeed);
+
+            int segmentCount = closeSplinePath ? pathPoints.Count : pathPoints.Count - 1;
+            try
+            {
+                for (int segment = 0; segment < segmentCount && !failed; segment++)
+                {
+                    int next = (segment + 1) % pathPoints.Count;
+                    Vector3 p1 = pathPoints[segment].LocalPosition;
+                    Vector3 p2 = pathPoints[next].LocalPosition;
+                    float worldSegmentLength = Vector3.Distance(
+                        target.transform.TransformPoint(p1),
+                        target.transform.TransformPoint(p2));
+                    int steps = Mathf.Clamp(
+                        Mathf.CeilToInt(worldSegmentLength / spacingDistance * 1.5f), 1, 4096);
+
+                    for (int step = segment == 0 ? 0 : 1; step <= steps; step++)
+                    {
+                        float t = step / (float)steps;
+                        Vector3 localPosition = EvaluatePathPosition(segment, t, closeSplinePath);
+                        Vector3 localNormal = EvaluatePathNormal(segment, t, closeSplinePath);
+                        Vector3 worldPosition = target.transform.TransformPoint(localPosition);
+                        Vector3 worldNormal = LocalNormalToWorld(localNormal);
+
+                        if (!TryProjectPathHit(collider, worldPosition, worldNormal, out RaycastHit projectedHit))
+                            continue;
+
+                        bool stampSucceeded;
+                        if (seamAwareProjection)
+                        {
+                            stampSucceeded = StampSurfaceWorld(
+                                projectedHit.point, projectedHit.normal, layer,
+                                operationToolbar == 1, operationToolbar == 2, GetActiveBrushAlpha(),
+                                randomizeSplineStamps, out failure);
+                        }
+                        else
+                        {
+                            stampSucceeded = StampLegacyPathHit(
+                                projectedHit, collider, layer, operationToolbar == 1,
+                                operationToolbar == 2, GetActiveBrushAlpha(),
+                                randomizeSplineStamps, out failure);
+                        }
+
+                        if (!stampSucceeded)
+                        {
+                            failed = true;
+                            break;
+                        }
+                        anyStamp = true;
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                failed = true;
+                failure = "Spline application failed: " + exception.Message;
+            }
+            finally
+            {
+                UnityEngine.Random.state = previousRandomState;
+            }
+
+            if (failed || !anyStamp)
+            {
+                gpuEngine.CancelStroke(out string cancelError);
+                pathStatus = failed ? failure :
+                    "No spline samples could be projected. Check that the anchors lie on the collider and the path does not cross a gap.";
+                if (!string.IsNullOrEmpty(cancelError))
+                    pathStatus += " Undo restore: " + cancelError;
+                Repaint();
+                SceneView.RepaintAll();
+                return;
+            }
+
+            gpuEngine.EndStroke();
+            hasUnsavedChanges = true;
+            BindWorkingMaskPreview();
+            pathStatus = seamAwareProjection
+                ? "Spline applied using seam-aware world projection as one Undo step. Save the mask page to persist the result."
+                : "Spline applied using legacy UV projection as one Undo step. UV seam gaps are possible. Save the mask page to persist the result.";
+            paintStatus = pathStatus;
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void DrawSplinePathPreview(bool hasCurrentHit, Vector3 currentHitPoint)
+        {
+            if (Event.current.type != EventType.Repaint || target == null)
+                return;
+
+            if (pathPoints.Count >= 2)
+            {
+                List<Vector3> line = new List<Vector3>();
+                int previewSegments = closeSplinePath ? pathPoints.Count : pathPoints.Count - 1;
+                for (int segment = 0; segment < previewSegments; segment++)
+                {
+                    int sampleCount = 12;
+                    for (int sample = segment == 0 ? 0 : 1; sample <= sampleCount; sample++)
+                    {
+                        Vector3 local = EvaluatePathPosition(segment, sample / (float)sampleCount, closeSplinePath);
+                        line.Add(target.transform.TransformPoint(local));
+                    }
+                }
+                Handles.color = new Color(1f, 0.68f, 0.12f, 0.95f);
+                if (line.Count >= 2)
+                    Handles.DrawAAPolyLine(3f, line.ToArray());
+            }
+
+            for (int i = 0; i < pathPoints.Count; i++)
+            {
+                Vector3 world = target.transform.TransformPoint(pathPoints[i].LocalPosition);
+                Handles.color = Color.white;
+                Handles.DotHandleCap(0, world, Quaternion.identity, HandleUtility.GetHandleSize(world) * 0.08f, EventType.Repaint);
+                Handles.Label(world, "  P" + (i + 1));
+            }
+
+            if (pathAuthoringEnabled && hasCurrentHit && pathPoints.Count > 0)
+            {
+                Vector3 last = target.transform.TransformPoint(pathPoints[pathPoints.Count - 1].LocalPosition);
+                Handles.color = new Color(0.3f, 0.85f, 1f, 0.8f);
+                Handles.DrawAAPolyLine(2f, last, currentHitPoint);
+            }
+        }
+
+        private Vector3 EvaluatePathPosition(int segment, float t, bool closed)
+        {
+            int count = pathPoints.Count;
+            int i0 = closed ? (segment - 1 + count) % count : Mathf.Max(0, segment - 1);
+            int i1 = segment;
+            int i2 = closed ? (segment + 1) % count : Mathf.Min(count - 1, segment + 1);
+            int i3 = closed ? (segment + 2) % count : Mathf.Min(count - 1, segment + 2);
+            return CatmullRom(
+                pathPoints[i0].LocalPosition, pathPoints[i1].LocalPosition,
+                pathPoints[i2].LocalPosition, pathPoints[i3].LocalPosition, t);
+        }
+
+        private Vector3 EvaluatePathNormal(int segment, float t, bool closed)
+        {
+            int next = closed ? (segment + 1) % pathPoints.Count : segment + 1;
+            Vector3 n1 = pathPoints[segment].LocalNormal;
+            Vector3 n2 = pathPoints[next].LocalNormal;
+            Vector3 normal = Vector3.Slerp(n1, n2, t);
+            return normal.sqrMagnitude > 0.000001f ? normal.normalized : Vector3.up;
+        }
+
+        private static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        {
+            float t2 = t * t;
+            float t3 = t2 * t;
+            return 0.5f * ((2f * p1) + (-p0 + p2) * t +
+                (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 +
+                (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
+        }
+
+        private Vector3 LocalNormalToWorld(Vector3 localNormal)
+        {
+            if (target == null)
+                return Vector3.up;
+            Vector3 world = target.transform.localToWorldMatrix.inverse.transpose.MultiplyVector(localNormal);
+            return world.sqrMagnitude > 0.000001f ? world.normalized : Vector3.up;
+        }
+
+        private bool TryProjectPathPoint(
+            MeshCollider collider,
+            Vector3 approximatePoint,
+            Vector3 normal,
+            out Vector3 projectedPoint,
+            out Vector3 projectedNormal)
+        {
+            projectedPoint = approximatePoint;
+            projectedNormal = normal.sqrMagnitude > 0.000001f ? normal.normalized : Vector3.up;
+            if (!TryProjectPathHit(collider, approximatePoint, normal, out RaycastHit hit))
+                return false;
+            projectedPoint = hit.point;
+            projectedNormal = hit.normal.sqrMagnitude > 0.000001f ? hit.normal.normalized : projectedNormal;
+            return true;
+        }
+
+        private bool TryProjectPathHit(
+            MeshCollider collider,
+            Vector3 approximatePoint,
+            Vector3 normal,
+            out RaycastHit projectedHit)
+        {
+            projectedHit = default;
+            if (collider == null)
+                return false;
+
+            if (normal.sqrMagnitude < 0.000001f)
+                normal = Vector3.up;
+            normal.Normalize();
+
+            // Keep the snap distance local to the path sample. The previous 3x-radius
+            // ray could jump to another nearby surface and then project the brush there.
+            float maxSnapDistance = Mathf.Max(0.15f, brushRadius * 0.75f);
+            Ray ray = new Ray(approximatePoint + normal * maxSnapDistance, -normal);
+            if (!collider.Raycast(ray, out RaycastHit hit, maxSnapDistance * 2f))
+                return false;
+
+            float distance = Vector3.Distance(hit.point, approximatePoint);
+            float facing = Vector3.Dot(hit.normal.normalized, normal);
+            if (distance > maxSnapDistance * 1.5f || facing < 0.1f)
+                return false;
+
+            projectedHit = hit;
+            return true;
+        }
+
+        private bool EnsureUvRasterMesh(out string error)
+        {
+            error = string.Empty;
+            if (target == null || !target.TryGetMesh(out Mesh sourceMesh))
+            {
+                error = "Select a valid readable MeshFilter target before painting.";
+                return false;
+            }
+
+            if (uvRasterMesh != null && uvRasterSourceMesh == sourceMesh && uvRasterMesh.Mesh != null)
+                return true;
+
+            DisposeUvRasterMesh();
+            if (!SurfaceUvRasterMesh.TryBuild(sourceMesh, out uvRasterMesh, out error))
+                return false;
+
+            uvRasterSourceMesh = sourceMesh;
+            if (uvRasterMesh.SkippedDegenerateTriangleCount > 0 ||
+                uvRasterMesh.SkippedNonTriangleSubmeshCount > 0)
+            {
+                paintStatus = "UV raster mesh skipped " + uvRasterMesh.SkippedDegenerateTriangleCount +
+                    " degenerate or invalid triangle(s) and " + uvRasterMesh.SkippedNonTriangleSubmeshCount +
+                    " non-triangle submesh(es). Check the mesh before painting.";
+            }
+            return true;
+        }
+
+        private void DisposeUvRasterMesh()
+        {
+            if (uvRasterMesh != null)
+            {
+                uvRasterMesh.Dispose();
+                uvRasterMesh = null;
+            }
+            uvRasterSourceMesh = null;
+        }
+
+        private bool StampSurfaceWorld(
+            Vector3 worldPoint,
+            Vector3 worldNormal,
+            SurfaceLayerDefinition layer,
+            bool erase,
+            bool smooth,
+            Texture2D alpha,
+            bool allowPresetRandomness,
+            out string error)
+        {
+            error = string.Empty;
+            if (gpuEngine == null || !gpuEngine.IsInitialized || target == null || layer == null)
+            {
+                error = "Load a valid target and mask page before stamping.";
+                return false;
+            }
+            if (!EnsureUvRasterMesh(out error))
+                return false;
+
+            float rotation = brushRotation;
+            if (allowPresetRandomness && brushPreset != null && brushPreset.RandomRotation)
+                rotation = UnityEngine.Random.Range(0f, 360f);
+            float stampRadius = brushRadius;
+            float effectiveJitter = allowPresetRandomness ? brushScaleJitter : 0f;
+            if (effectiveJitter > 0f)
+                stampRadius *= UnityEngine.Random.Range(1f - effectiveJitter, 1f + effectiveJitter);
+
+            return gpuEngine.StampSurfaceMesh(
+                uvRasterMesh.Mesh,
+                target.transform.localToWorldMatrix,
+                worldPoint,
+                worldNormal,
+                stampRadius,
+                Mathf.Max(0.001f, stampRadius * projectionDepthScale),
+                surfaceNormalCutoff,
+                brushOpacity,
+                brushHardness,
+                (int)layer.MaskChannel,
+                erase,
+                alpha,
+                rotation,
+                smooth,
+                out error);
         }
 
         private void ApplyChannelFill(SurfaceLayerDefinition layer, float value, string successMessage)
@@ -714,6 +1331,14 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void PaintAtHit(SurfaceSceneHit currentHit)
         {
+            if (seamAwareProjection)
+                PaintAtHitSeamAware(currentHit);
+            else
+                PaintAtHitLegacy(currentHit);
+        }
+
+        private void PaintAtHitSeamAware(SurfaceSceneHit currentHit)
+        {
             if (gpuEngine == null || !gpuEngine.IsInitialized || profile == null)
                 return;
 
@@ -721,11 +1346,79 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (layer == null || !layer.Enabled)
                 return;
 
-            Vector3 worldPerUvU;
-            Vector3 worldPerUvV;
-            string metricError;
+            bool erase = operationToolbar == 1;
+            bool smooth = operationToolbar == 2;
+            Texture2D alpha = GetActiveBrushAlpha();
+            string error = string.Empty;
+            bool stamped = false;
+
+            if (!hasPreviousPaintHit || previousPaintHit.Target != currentHit.Target)
+            {
+                stamped = StampSurfaceWorld(currentHit.Point, currentHit.Normal, layer, erase, smooth, alpha, true, out error);
+            }
+            else
+            {
+                float worldDistance = Vector3.Distance(previousPaintHit.Point, currentHit.Point);
+                float spacingDistance = Mathf.Max(
+                    0.01f,
+                    brushRadius * (1f - brushScaleJitter) * 2f * brushSpacing);
+                int steps = Mathf.Clamp(Mathf.CeilToInt(worldDistance / spacingDistance), 1, 256);
+                MeshCollider collider = target.GetComponent<MeshCollider>();
+
+                for (int i = 1; i <= steps; i++)
+                {
+                    float t = i / (float)steps;
+                    Vector3 approximate = Vector3.Lerp(previousPaintHit.Point, currentHit.Point, t);
+                    Vector3 normal = Vector3.Slerp(previousPaintHit.Normal, currentHit.Normal, t).normalized;
+                    if (!TryProjectPathPoint(collider, approximate, normal,
+                            out Vector3 projected, out Vector3 projectedNormal))
+                        continue;
+
+                    approximate = projected;
+                    normal = projectedNormal;
+
+                    if (!StampSurfaceWorld(approximate, normal, layer, erase, smooth, alpha, true, out error))
+                    {
+                        hasPreviousPaintHit = false;
+                        paintStatus = error;
+                        Repaint();
+                        return;
+                    }
+                    stamped = true;
+                }
+            }
+
+            if (!stamped && !string.IsNullOrEmpty(error))
+            {
+                hasPreviousPaintHit = false;
+                paintStatus = error;
+                Repaint();
+                return;
+            }
+
+            previousPaintHit = currentHit;
+            hasPreviousPaintHit = true;
+            BindWorkingMaskPreview();
+            hasUnsavedChanges = true;
+            paintStatus = smooth
+                ? "Seam-aware smoothing applied to the selected layer. Save the mask page to persist changes."
+                : erase
+                    ? "Seam-aware erasing applied to the selected layer. Save the mask page to persist changes."
+                    : "Seam-aware painting applied to the selected layer. Save the mask page to persist changes.";
+            Repaint();
+        }
+
+        private void PaintAtHitLegacy(SurfaceSceneHit currentHit)
+        {
+            if (gpuEngine == null || !gpuEngine.IsInitialized || profile == null)
+                return;
+
+            SurfaceLayerDefinition layer = GetSelectedLayer();
+            if (layer == null || !layer.Enabled)
+                return;
+
             if (!SurfaceUvMetric.TryGetWorldPerUv(
-                    currentHit, out worldPerUvU, out worldPerUvV, out metricError))
+                    currentHit, out Vector3 worldPerUvU, out Vector3 worldPerUvV, out string metricError))
             {
                 paintStatus = metricError;
                 hasPreviousPaintHit = false;
@@ -740,21 +1433,20 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (!hasPreviousPaintHit || previousPaintHit.Target != currentHit.Target ||
                 HasUvDiscontinuity(previousPaintHit.Uv0, currentHit.Uv0))
             {
-                Stamp(currentHit.Uv0, worldPerUvU, worldPerUvV, layer, erase, smooth, alpha);
+                StampLegacy(currentHit.Uv0, worldPerUvU, worldPerUvV, layer, erase, smooth, alpha);
             }
             else
             {
                 float worldDistance = Vector3.Distance(previousPaintHit.Point, currentHit.Point);
                 float spacingDistance = Mathf.Max(
                     0.01f,
-                    brushRadius * (1f + brushScaleJitter) * 2f * brushSpacing);
+                    brushRadius * (1f - brushScaleJitter) * 2f * brushSpacing);
                 int steps = Mathf.Clamp(Mathf.CeilToInt(worldDistance / spacingDistance), 1, 256);
-
                 for (int i = 1; i <= steps; i++)
                 {
                     float t = i / (float)steps;
                     Vector2 uv = Vector2.Lerp(previousPaintHit.Uv0, currentHit.Uv0, t);
-                    Stamp(uv, worldPerUvU, worldPerUvV, layer, erase, smooth, alpha);
+                    StampLegacy(uv, worldPerUvU, worldPerUvV, layer, erase, smooth, alpha);
                 }
             }
 
@@ -762,32 +1454,54 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             hasPreviousPaintHit = true;
             BindWorkingMaskPreview();
             hasUnsavedChanges = true;
-            paintStatus = smooth
-                ? "Smoothing selected layer mask. Save the mask page to persist changes."
-                : erase
-                    ? "Erasing selected layer. Save the mask page to persist changes."
-                    : "Painting selected layer. Save the mask page to persist changes.";
+            paintStatus = "Legacy UV painting applied. Seam gaps may occur at UV discontinuities.";
             Repaint();
         }
 
-        private void Stamp(
+        private bool StampLegacyPathHit(
+            RaycastHit hit,
+            MeshCollider collider,
+            SurfaceLayerDefinition layer,
+            bool erase,
+            bool smooth,
+            Texture2D alpha,
+            bool allowPresetRandomness,
+            out string error)
+        {
+            SurfaceSceneHit sceneHit = new SurfaceSceneHit(target, collider, hit);
+            if (!SurfaceUvMetric.TryGetWorldPerUv(
+                    sceneHit, out Vector3 worldPerUvU, out Vector3 worldPerUvV, out error))
+                return false;
+
+            float rotation = brushRotation;
+            if (allowPresetRandomness && brushPreset != null && brushPreset.RandomRotation)
+                rotation = UnityEngine.Random.Range(0f, 360f);
+            float radius = brushRadius;
+            if (allowPresetRandomness && brushScaleJitter > 0f)
+                radius *= UnityEngine.Random.Range(1f - brushScaleJitter, 1f + brushScaleJitter);
+
+            return gpuEngine.Stamp(
+                sceneHit.Uv0, worldPerUvU, worldPerUvV, radius, brushOpacity, brushHardness,
+                (int)layer.MaskChannel, erase, alpha, rotation, smooth, out error);
+        }
+
+        private void StampLegacy(
             Vector2 uv,
             Vector3 worldPerUvU,
             Vector3 worldPerUvV,
             SurfaceLayerDefinition layer,
             bool erase,
             bool smooth,
-            Texture2D alpha)
+            Texture2D alpha,
+            bool allowPresetRandomness = true)
         {
-            float rotation = brushRotation;
-            if (brushPreset != null && brushPreset.RandomRotation)
-                rotation = UnityEngine.Random.Range(0f, 360f);
-
+            float rotation = allowPresetRandomness && brushPreset != null && brushPreset.RandomRotation
+                ? UnityEngine.Random.Range(0f, 360f)
+                : brushRotation;
             float stampRadius = brushRadius;
-            if (brushScaleJitter > 0f)
+            if (allowPresetRandomness && brushScaleJitter > 0f)
                 stampRadius *= UnityEngine.Random.Range(1f - brushScaleJitter, 1f + brushScaleJitter);
 
-            string error;
             if (!gpuEngine.Stamp(
                     uv,
                     worldPerUvU,
@@ -800,10 +1514,16 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     alpha,
                     rotation,
                     smooth,
-                    out error))
+                    out string error))
             {
                 paintStatus = error;
             }
+        }
+
+        private static bool HasUvDiscontinuity(Vector2 previous, Vector2 current)
+        {
+            Vector2 delta = current - previous;
+            return Mathf.Abs(delta.x) > 0.35f || Mathf.Abs(delta.y) > 0.35f;
         }
 
         private Texture2D GetActiveBrushAlpha()
@@ -811,12 +1531,6 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (directBrushAlpha != null)
                 return directBrushAlpha;
             return brushPreset != null ? brushPreset.AlphaTexture : null;
-        }
-
-        private static bool HasUvDiscontinuity(Vector2 previous, Vector2 current)
-        {
-            Vector2 delta = current - previous;
-            return Mathf.Abs(delta.x) > 0.35f || Mathf.Abs(delta.y) > 0.35f;
         }
 
         private void OnSceneGUI(SceneView sceneView)
@@ -870,6 +1584,39 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             {
                 hasSceneHit = false;
                 sceneHitStatus = status;
+            }
+
+            if (pathAuthoringEnabled)
+            {
+                DrawSplinePathPreview(hitFound, hitFound ? hit.Point : Vector3.zero);
+
+                if (currentEvent.type == EventType.Layout && (hitFound || pathPoints.Count > 0))
+                    HandleUtility.AddDefaultControl(controlId);
+
+                if (currentEvent.type == EventType.MouseDown &&
+                    currentEvent.button == 0 && hitFound)
+                {
+                    AddPathAnchor(hit);
+                    currentEvent.Use();
+                }
+                else if (currentEvent.type == EventType.KeyDown &&
+                         currentEvent.keyCode == KeyCode.Backspace && pathPoints.Count > 0)
+                {
+                    pathPoints.RemoveAt(pathPoints.Count - 1);
+                    pathStatus = "Removed the last spline anchor.";
+                    Repaint();
+                    SceneView.RepaintAll();
+                    currentEvent.Use();
+                }
+
+                if (currentEvent.type == EventType.MouseMove ||
+                    currentEvent.type == EventType.MouseDrag ||
+                    currentEvent.type == EventType.Repaint)
+                {
+                    Repaint();
+                    sceneView.Repaint();
+                }
+                return;
             }
 
             if (currentEvent.type == EventType.MouseDown &&
@@ -948,7 +1695,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private bool CanPaint()
         {
             SurfaceLayerDefinition layer = GetSelectedLayer();
-            return paintingEnabled && IsSessionForLayer(layer) &&
+            return paintingEnabled && !pathAuthoringEnabled && IsSessionForLayer(layer) &&
                    profile != null && target != null && target.Profile == profile &&
                    layer != null && layer.Enabled && target.UvChannel == 0;
         }
@@ -1048,6 +1795,30 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
             Repaint();
             SceneView.RepaintAll();
+        }
+
+        private Material GetMaskChannelPreviewMaterial(int channel)
+        {
+            if (maskChannelPreviewMaterial == null)
+            {
+                Shader shader = Shader.Find("Hidden/SurfaceWeaver/MaskChannelPreview");
+                if (shader == null || !shader.isSupported)
+                    return null;
+
+                maskChannelPreviewMaterial = new Material(shader)
+                {
+                    name = "SurfaceWeaver Mask Channel Preview (Editor)",
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+            }
+
+            if (maskChannelPreviewMaterial != null && cachedPreviewChannel != channel)
+            {
+                maskChannelPreviewMaterial.SetFloat("_ChannelIndex", channel);
+                cachedPreviewChannel = channel;
+            }
+
+            return maskChannelPreviewMaterial;
         }
 
         private void BindWorkingMaskPreview()
@@ -1166,8 +1937,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "Included: custom mesh targets, reusable profiles, UV range/degenerate/overlap/seam diagnostics, " +
                 "Scene View picking, world-space brush preview, GPU paint/erase/smooth stamps, selected-channel fill/clear, " +
                 "packed RGBA pages, starter brushes, stroke Undo/Redo and PNG persistence.\n\n" +
-                "Still planned: seam-aware cross-island brush propagation, island padding/dilation, spline/path painting, " +
-                "scatter placement, multi-object batch authoring, production multi-layer URP shader, runtime API and package validation.",
+                "Added in v0.6: seam-aware world-space UV raster projection and reusable Catmull-Rom spline/path painting. " +
+                "Still planned: UV gutter padding/dilation, mip-bleed analysis, editable/variable-width paths, scatter placement, " +
+                "multi-object batch authoring, production multi-layer URP shader, runtime API and package validation.",
                 MessageType.None);
         }
     }

@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c5ae00c9dc7bf6bf5be30e010daa81db, type: 3}
+  m_Name: Scatter 1
+  m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Runtime::HemanthGameDev.SurfaceWeaver.Runtime.SurfaceBrushPreset
+  displayName: Scatter
+  alphaTexture: {fileID: 2800000, guid: 72450363fa8678546bfae802ba824472, type: 3}
+  defaults:
+    RadiusWorldUnits: 1.8
+    Opacity: 0.55
+    Hardness: 0.15
+    Spacing: 0.35
+    Jitter: 0.25
+  randomRotation: 1
+  scaleJitter: 0.3

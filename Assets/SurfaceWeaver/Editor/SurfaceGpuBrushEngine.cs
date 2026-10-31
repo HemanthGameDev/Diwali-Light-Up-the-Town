@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Rendering;
 using HemanthGameDev.SurfaceWeaver.Runtime;
 
 namespace HemanthGameDev.SurfaceWeaver.Editor
@@ -11,6 +12,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
     internal sealed class SurfaceGpuBrushEngine : IDisposable
     {
         private const string ShaderName = "Hidden/SurfaceWeaver/MaskStamp";
+        private const string MeshShaderName = "Hidden/SurfaceWeaver/MeshMaskStamp";
 
         private static readonly int UvCenterId = Shader.PropertyToID("_UvCenter");
         private static readonly int WorldPerUvUId = Shader.PropertyToID("_WorldPerUvU");
@@ -25,10 +27,18 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private static readonly int BrushRotationId = Shader.PropertyToID("_BrushRotation");
         private static readonly int FillModeId = Shader.PropertyToID("_FillMode");
         private static readonly int SmoothModeId = Shader.PropertyToID("_SmoothMode");
+        private static readonly int TargetLocalToWorldId = Shader.PropertyToID("_TargetLocalToWorld");
+        private static readonly int TargetWorldNormalMatrixId = Shader.PropertyToID("_TargetWorldNormalMatrix");
+        private static readonly int BrushCenterWorldId = Shader.PropertyToID("_BrushCenterWorld");
+        private static readonly int BrushNormalWorldId = Shader.PropertyToID("_BrushNormalWorld");
+        private static readonly int NormalCutoffId = Shader.PropertyToID("_NormalCutoff");
+        private static readonly int ProjectionDepthId = Shader.PropertyToID("_ProjectionDepth");
+        private static readonly int FlipRasterYId = Shader.PropertyToID("_FlipRasterY");
 
         private RenderTexture readTexture;
         private RenderTexture writeTexture;
         private Material stampMaterial;
+        private Material meshStampMaterial;
         private RenderTexture pendingStrokeSnapshot;
         private int pendingStrokeStampCount;
         private readonly System.Collections.Generic.List<RenderTexture> undoHistory =
@@ -323,6 +333,145 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
         }
 
+        /// <summary>
+        /// Stamps a world-space brush by rasterizing the entire source mesh in UV0 space.
+        /// Because every source triangle is drawn independently with its own local-space
+        /// position and face normal, duplicated vertices on UV seams receive the same
+        /// world-space brush and the stamp is clipped naturally to each UV triangle.
+        /// </summary>
+        public bool StampSurfaceMesh(
+            Mesh uvRasterMesh,
+            Matrix4x4 targetLocalToWorld,
+            Vector3 brushCenterWorld,
+            Vector3 brushNormalWorld,
+            float radiusWorldUnits,
+            float projectionDepthWorldUnits,
+            float normalCutoff,
+            float opacity,
+            float hardness,
+            int channelIndex,
+            bool erase,
+            Texture2D brushAlpha,
+            float brushRotationDegrees,
+            bool smooth,
+            out string error)
+        {
+            error = string.Empty;
+            if (!IsInitialized)
+            {
+                error = "The mask painting session is not initialized.";
+                return false;
+            }
+            if (uvRasterMesh == null)
+            {
+                error = "The UV raster mesh has not been built for the selected target.";
+                return false;
+            }
+            if (channelIndex < 0 || channelIndex > 3)
+            {
+                error = "Packed mask channel must be between 0 (R) and 3 (A).";
+                return false;
+            }
+
+            if (meshStampMaterial == null)
+            {
+                Shader meshShader = Shader.Find(MeshShaderName);
+                if (meshShader == null || !meshShader.isSupported)
+                {
+                    error = "Could not find or use " + MeshShaderName + ". Check shader compilation and graphics API support.";
+                    return false;
+                }
+                meshStampMaterial = new Material(meshShader)
+                {
+                    name = "SurfaceWeaver Mesh-Projected Mask Stamp (Editor)",
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+            }
+
+            meshStampMaterial.SetTexture("_MainTex", readTexture);
+            meshStampMaterial.SetTexture(BrushTextureId,
+                brushAlpha != null ? (Texture)brushAlpha : Texture2D.whiteTexture);
+            float transformDeterminant = targetLocalToWorld.determinant;
+            if (float.IsNaN(transformDeterminant) || float.IsInfinity(transformDeterminant) ||
+                Mathf.Abs(transformDeterminant) < 0.000001f)
+            {
+                error = "The target has a singular or zero-scale transform. Apply a non-zero scale before seam-aware painting.";
+                return false;
+            }
+
+            meshStampMaterial.SetMatrix(TargetLocalToWorldId, targetLocalToWorld);
+            meshStampMaterial.SetMatrix(TargetWorldNormalMatrixId, targetLocalToWorld.inverse.transpose);
+            meshStampMaterial.SetVector(BrushCenterWorldId, brushCenterWorld);
+            meshStampMaterial.SetVector(BrushNormalWorldId,
+                brushNormalWorld.sqrMagnitude > 0.000001f ? brushNormalWorld.normalized : Vector3.up);
+            meshStampMaterial.SetFloat(NormalCutoffId, Mathf.Clamp(normalCutoff, 0.05f, 0.95f));
+            meshStampMaterial.SetFloat(ProjectionDepthId, Mathf.Max(0.001f, projectionDepthWorldUnits));
+            meshStampMaterial.SetFloat(FlipRasterYId, SystemInfo.graphicsUVStartsAtTop ? 1f : 0f);
+            meshStampMaterial.SetFloat(RadiusWorldId, Mathf.Max(0.001f, radiusWorldUnits));
+            meshStampMaterial.SetFloat(OpacityId, Mathf.Clamp01(opacity));
+            meshStampMaterial.SetFloat(HardnessId, Mathf.Clamp01(hardness));
+            meshStampMaterial.SetFloat(ChannelIndexId, channelIndex);
+            meshStampMaterial.SetFloat(TargetValueId, erase ? 0f : 1f);
+            meshStampMaterial.SetFloat(UseBrushAlphaId, brushAlpha != null ? 1f : 0f);
+            meshStampMaterial.SetFloat(BrushRotationId, brushRotationDegrees * Mathf.Deg2Rad);
+            meshStampMaterial.SetFloat(SmoothModeId, smooth ? 1f : 0f);
+
+            RenderTexture previousActive = RenderTexture.active;
+            bool previousSrgbWrite = GL.sRGBWrite;
+            bool succeeded = false;
+            try
+            {
+                GL.sRGBWrite = false;
+                Graphics.Blit(readTexture, writeTexture);
+                RenderTexture.active = writeTexture;
+
+                if (!meshStampMaterial.SetPass(0))
+                {
+                    error = "Could not activate the mesh-projected mask stamp shader pass.";
+                    return false;
+                }
+
+                CommandBuffer commandBuffer = new CommandBuffer
+                {
+                    name = "SurfaceWeaver UV-Space Mesh Stamp"
+                };
+                try
+                {
+                    commandBuffer.SetRenderTarget(writeTexture);
+                    commandBuffer.SetViewport(new Rect(0f, 0f, Width, Height));
+                    commandBuffer.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
+                    commandBuffer.DrawMesh(uvRasterMesh, Matrix4x4.identity, meshStampMaterial, 0, 0);
+                    Graphics.ExecuteCommandBuffer(commandBuffer);
+                }
+                finally
+                {
+                    commandBuffer.Release();
+                }
+
+                succeeded = true;
+            }
+            catch (Exception exception)
+            {
+                error = "Mesh-projected GPU brush stamp failed: " + exception.Message;
+                return false;
+            }
+            finally
+            {
+                GL.sRGBWrite = previousSrgbWrite;
+                RenderTexture.active = previousActive;
+            }
+
+            if (!succeeded)
+                return false;
+
+            RenderTexture swap = readTexture;
+            readTexture = writeTexture;
+            writeTexture = swap;
+            if (pendingStrokeSnapshot != null)
+                pendingStrokeStampCount++;
+            return true;
+        }
+
         public bool SetChannelValue(int channelIndex, float value, out string error)
         {
             error = string.Empty;
@@ -422,6 +571,15 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 else
                     UnityEngine.Object.DestroyImmediate(stampMaterial);
                 stampMaterial = null;
+            }
+
+            if (meshStampMaterial != null)
+            {
+                if (Application.isPlaying)
+                    UnityEngine.Object.Destroy(meshStampMaterial);
+                else
+                    UnityEngine.Object.DestroyImmediate(meshStampMaterial);
+                meshStampMaterial = null;
             }
 
             Width = 0;

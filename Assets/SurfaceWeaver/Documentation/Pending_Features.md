@@ -1,60 +1,60 @@
-# SurfaceWeaver — Remaining Work After v0.5.0
+# SurfaceWeaver — Remaining Work After v0.6.0
 
-This list is the current product backlog. “Implemented” means source code exists; it does not mean the feature has been validated in every Unity version or graphics API.
+This backlog separates source features from validated release status. A feature is not considered production-ready until it is tested in the target Unity Editor and supported graphics APIs.
 
-## Next engineering milestones
+## Completed in source by v0.6.0
+- Custom static MeshFilter/MeshRenderer targets with non-convex MeshCollider picking.
+- Scene View brush preview and UV0 hit diagnostics.
+- GPU packed RGBA mask painting, erase, smooth, fill, clear and PNG persistence.
+- Session Undo/Redo using GPU snapshots.
+- Starter/custom brush alpha presets, rotation, jitter and spacing.
+- UV0 range, degenerate, overlap-pair and geometric seam diagnostics.
+- Seam-aware world-space projection by rasterizing every source triangle in UV0 space with source local positions and per-triangle face normals.
+- Catmull-Rom path preview, anchor authoring, MeshCollider sample projection and one-stroke application.
+- Reusable path assets with local-space points, brush configuration, seed and GlobalObjectId string target resolution.
 
-### 0.6 — UV robustness and path authoring
-- Seam-aware cross-island brush propagation so a world-space stroke can continue onto the matching UV island at a mesh seam.
-- Seam padding / mask dilation and configurable gutter to reduce texture-filtering and mip bleed.
-- UV island grouping and island-level diagnostics, including mirrored/stacked UV identification.
-- Better handling of discontinuous UV charts, mirrored mappings, non-uniform scale and high-curvature triangles.
-- Spline/path painting with width, falloff, spacing, pressure/opacity profile, and deterministic re-editing.
-- Multi-target workflow and batch mask export.
+## v0.6 validation still required
+- Unity compilation and shader compilation in the supported Unity 6/URP project.
+- Seam painting on a mesh with a real split UV seam (e.g. a cylinder or sphere), including both sides of the seam.
+- Correct render-texture orientation and UV-to-pixel placement across the supported graphics APIs.
+- Normal filtering on adjacent, sharply angled and back-facing surfaces.
+- Non-uniform scale/rotation brush footprint tests.
+- RGBA channel isolation with a multi-channel mask page.
+- Spline preview, application, Undo, deterministic brush jitter, save/load of path assets, and path target resolution after scene reload.
+- Large-mesh and long-spline performance profiling.
 
-### 0.7 — Production material integration
-- A supported URP multi-layer shader/material implementation driven by `SurfacePaintProfile`.
-- Automatic mask page/channel binding and layer-order blending.
-- Per-layer tiling, tint, opacity, normal map, metallic/smoothness (optional), and edge breakup.
-- Configurable layer count / shader variants and mobile-oriented texture-sample budgets.
-- Editor preview material generation and validation.
-- Dedicated runtime profile/mask loading API. Runtime painting is a separate optional scope and is not promised for the first Asset Store release.
-- Separate mask-texture storage mode or a clear decision to support packed RGBA pages only.
+## v0.7 — UV output quality and rendering
+- Island-aware UV gutter dilation/padding, bleed prevention and mip validation.
+- Better UV island grouping and mirrored/stacked chart detection.
+- Adjustable normal cutoff and more robust high-curvature handling.
+- Profile-driven multi-layer URP shader/material generator and binder.
+- Automatic RGBA page/channel binding, per-layer albedo/tint/tiling/opacity and optional surface properties.
+- Mobile texture-sample budget controls and runtime profile/mask consumption.
 
-### 0.8 — Advanced authoring
-- Object/vegetation scatter placement (distinct from the current grayscale scatter brush stamp).
-- Smudge / directional blur tools if justified by user testing.
-- Region/flood-fill operations that respect mesh connectivity and UV islands.
-- Multi-object batch authoring, reusable surface recipes and project-level preset management.
-- Stronger save/recovery flow, autosave, undo compression and history budgeting.
+## v0.8 — Advanced authoring
+- Editable path handles, closed paths, variable width and pressure/opacity curves.
+- Multi-target authoring and batch mask export.
+- Object/vegetation scatter placement.
+- Region/flood-fill respecting mesh connectivity and UV islands.
+- Reusable surface recipes and advanced save/recovery.
 
-### 0.9 — Production quality and compatibility
-- Unity EditMode automated tests for UV overlap, seam detection, mask-channel preservation, Undo/Redo and asset persistence.
-- Graphics API testing for Direct3D 11/12, Vulkan and Metal where available.
-- Unity/URP version compatibility matrix and package validation.
-- Performance profiling on low/mid-tier desktop and Android authoring/runtime targets.
-- Memory budget diagnostics and asynchronous GPU readback where supported.
-- Edge-case testing for large meshes, submeshes, non-readable meshes, missing colliders, non-uniform transforms, mirrored UVs and UVs outside 0–1.
+## v0.9 — Quality and compatibility
+- Automated Unity Editor tests.
+- Direct3D 11/12, Vulkan and Metal testing where available.
+- Supported Unity/URP compatibility matrix.
+- GPU/memory profiling and large-mesh optimization.
+- Negative-scale, high-curvature, non-readable, boundary and overlapping-UV edge cases.
 
-### 1.0 — Asset Store release
-- Polished Editor UI, contextual help, first-run setup wizard and actionable error messages.
-- Lite/Pro feature split implemented without compromising Lite core workflow.
-- Demo project, sample meshes, neutral sample textures, brush presets, tutorial videos and complete documentation.
-- Third-party/license audit and AI-content disclosure for included generated content.
-- Asset Store package structure, screenshots, trailer, changelog, support policy, validator pass and final compatibility testing.
+## v1.0 — Asset Store release
+- Product polish, Lite/Pro split, samples, documentation, tutorials, release package, validator, screenshots, trailer, support policy, license audit and AI-content disclosure.
 
-## Current v0.5.0 status
-
-Implemented in source:
-- Custom MeshFilter/MeshRenderer target workflow.
-- Scene View mesh picking and UV0 diagnostics.
-- GPU paint, erase and mask smooth operations.
-- Packed RGBA mask pages, channel-isolated Fill/Clear, PNG persistence.
-- Session Undo/Redo and starter alpha brushes.
-- Positive-area UV triangle-overlap pair diagnostics and geometric seam-edge diagnostics.
-
-Not yet implemented:
-- Seam-aware cross-island paint propagation and seam padding.
-- Profile-driven multi-layer URP surface rendering.
-- Spline/path painting, object scatter, multi-target batch workflow and runtime painting API.
-- Automated Unity test suite and Asset Store release validation.
+## Known v0.6 limitations
+- UV0 only; UV coordinates must be in 0–1.
+- Overlapping/stacked charts remain ambiguous.
+- Smooth is still UV-neighbourhood based, not island-aware.
+- No automatic gutter dilation/mip-bleed correction.
+- One target at a time.
+- Spline width is constant; no closed paths or editable tangent handles.
+- Applying a path modifies the active mask page. The path asset stores the recipe, not a separate non-destructive layer.
+- Full profile-driven URP multi-layer rendering is not implemented yet.
+- Full UV raster geometry is drawn for each stamp; large meshes may be slow.

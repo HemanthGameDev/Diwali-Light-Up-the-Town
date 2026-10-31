@@ -1,116 +1,97 @@
-# SurfaceWeaver – Architecture
+# SurfaceWeaver — Architecture
 
 ## Product direction
 
-SurfaceWeaver is a **URP-first, custom-static-mesh environment surface authoring tool**. It is not intended to be a general runtime painting system in its first release.
+SurfaceWeaver is a **URP-first, Editor-only custom static-mesh surface authoring tool**. Its first release is for environment artists painting and baking surface masks on Blender/Maya/custom meshes. It is not a general runtime painting system in the current scope.
 
-The product should help environment artists paint and bake layered materials on Blender/Maya/custom meshes. It should be useful for ground pieces, cliffs, modular environment meshes and large static environment surfaces.
+Product hypotheses to validate with users include pre-paint UV diagnostics, seam-aware world-space projection, spline/path painting, reusable path recipes, and a mobile-conscious baked-mask output workflow. These are proposed differentiators, not proven market advantages.
 
-The differentiators to validate with users are:
-
-1. UV diagnostics and clear warnings before painting.
-2. Path/spline-assisted painting for roads, trails, riverbanks and other environment strips.
-3. Reusable surface recipes and portable baked masks.
-4. A mobile-conscious URP output workflow with predictable texture/shader budgets.
-
-These are product hypotheses, not established competitive advantages. The generic mesh-painting category already contains mature products; validate demand before expanding scope.
-
-## Runtime / Editor boundary
+## Assembly boundary
 
 ```text
 Assets/SurfaceWeaver/
   Runtime/
-    SurfacePaintTypes.cs
-    SurfaceLayerDefinition.cs
-    SurfacePaintProfile.cs
     SurfacePaintTarget.cs
+    SurfacePaintProfile.cs
+    SurfaceLayerDefinition.cs
     SurfaceBrushPreset.cs
-    *.asmdef
+    SurfacePaintPathAsset.cs
+    HemanthGameDev.SurfaceWeaver.Runtime.asmdef
 
   Editor/
     SurfaceWeaverWindow.cs
-    SurfacePaintTargetEditor.cs
+    SurfaceScenePicker.cs
+    SurfaceGpuBrushEngine.cs
+    SurfaceUvRasterMesh.cs
     MeshUvValidator.cs
-    MeshUvValidationReport.cs
-    *.asmdef
+    HemanthGameDev.SurfaceWeaver.Editor.asmdef
+    Shaders/
 
-  Shaders/                 (next milestone)
-  Samples~/                (later; source samples)
   Documentation/
 ```
 
-### Runtime assembly
+`HemanthGameDev.SurfaceWeaver.Runtime` contains serializable data and components only and must not reference `UnityEditor`. `HemanthGameDev.SurfaceWeaver.Editor` owns Scene View interaction, GPU resources, path editing, mask persistence, diagnostics and the editor UI.
 
-`HemanthGameDev.SurfaceWeaver.Runtime`
+## Target constraints
 
-Contains serializable data and components only. It must not reference `UnityEditor`.
-
-- `SurfacePaintTarget`: identifies the target `MeshFilter` and `MeshRenderer`, stores a `SurfacePaintProfile`, and chooses the UV channel.
-- `SurfacePaintProfile`: reusable recipe containing a base texture, ordered overlay definitions, mask-page references and output resolution.
-- `SurfaceLayerDefinition`: one overlay's albedo texture, tint, tiling, opacity, and packed mask-page/channel assignment.
-- `SurfaceBrushPreset`: optional brush alpha texture and default brush settings.
-- `SurfacePaintTypes`: mask channel, operation, storage mode and common brush settings.
-
-### Editor assembly
-
-`HemanthGameDev.SurfaceWeaver.Editor`
-
-Editor-only assembly. It owns Scene View interaction, GPU resources, UV diagnostics, mask persistence, Undo/Redo, UI and import settings. It may reference the runtime assembly, but the runtime assembly must never reference this assembly.
+- Static `MeshFilter` + `MeshRenderer`.
+- Readable mesh data and UV0 with one coordinate per vertex.
+- UV0 coordinates inside normalized 0–1 for the current mask raster canvas.
+- Non-convex `MeshCollider` referencing the same mesh for Scene View picking and path projection.
+- Triangle submeshes are rasterized; non-triangle submeshes are skipped and reported.
+- Overlapping UV charts cannot represent distinct masks in the same texels and must be resolved or accepted knowingly.
 
 ## Mask storage model
 
-The planned default is packed RGBA pages. One RGBA mask texture stores four independent grayscale layer masks:
+Packed RGBA pages store four independent grayscale surface masks:
 
-- R = overlay layer 0
-- G = overlay layer 1
-- B = overlay layer 2
-- A = overlay layer 3
+- R = layer 0
+- G = layer 1
+- B = layer 2
+- A = layer 3
 
-Additional mask pages can hold further layers. A layer definition stores a mask page index and channel. The shader samples the selected channels and blends the base surface with the enabled overlay layers in stack order.
+Additional pages can hold more layers. Painting and mask operations must write only the selected channel, preserving all other channel values. Pages are linear RGBA32 RenderTextures during authoring and are explicitly saved as PNG assets.
 
-Keep an option for separate grayscale masks where artists need simple exports or a target shader cannot use packed pages.
+## Seam-aware UV raster backend (v0.6)
 
-## Painting backend
+`SurfaceUvRasterMesh` builds a temporary mesh by duplicating each source triangle into UV0 coordinates. The temporary mesh uses:
 
-Planned Editor-only backend:
+- `POSITION`: UV0 converted to a 0–1 raster surface.
+- `TEXCOORD0`: original UV0, used to sample the mask page.
+- `TEXCOORD1`: source mesh local-space position.
+- `TEXCOORD2`: source triangle local-space face normal (constant for the three duplicated triangle vertices).
 
-1. Scene View raycast against a non-convex `MeshCollider` on the selected static mesh.
-2. Read the hit UV from the configured UV channel.
-3. Calculate a local UV footprint for the requested world-space brush radius using the hit triangle's world positions and UVs. Do not estimate brush scale from the overall mesh bounds; that stretches on rotated or irregular meshes.
-4. Stamp the brush alpha into a ping-pong `RenderTexture` pair using a small URP-compatible hidden paint shader.
-5. Keep the render targets transient while the session is active; commit to a persistent mask asset only on explicit Save/Apply.
-6. Record stroke checkpoints for Undo/Redo. Do not serialize a full-resolution PNG after every brush sample.
-7. Save/import mask assets with explicit sRGB, mipmap, wrap and compression settings. Use atomic file replacement and a backup before overwriting user assets.
+For each world-space brush stamp, `SurfaceGpuBrushEngine` copies the current page into the write target, then draws the temporary UV raster mesh into the write target. The shader transforms interpolated source positions to world space, transforms face normals using the inverse-transpose matrix, applies a world-space radial brush and a normal-alignment cutoff, and modifies only the selected mask channel. Duplicated geometry at a UV seam is represented as separate UV triangles, so every chart triangle under the same world-space brush footprint is stamped in its own UV coordinates.
 
-## Shader plan
+The brush alpha frame is derived from a stable target-local axis projected onto each surface tangent plane. This gives duplicated seam vertices the same orientation for a given surface normal, rather than deriving orientation from UV chart directions.
 
-Use a URP-compatible shader/material template rather than requiring users to hand-build a Shader Graph. Shader parameters should support:
+### Backend limitations
 
-- base albedo, tint and tiling;
-- overlay albedo, tint, tiling and opacity;
-- packed mask pages;
-- optional edge variation/noise;
-- a configurable maximum overlay count per shader variant.
+- The backend currently paints UV0 only and rejects UV coordinates outside 0–1.
+- Positive-area UV overlaps or stacked charts are ambiguous; overlapping surfaces update the same mask pixels.
+- The normal alignment cutoff is fixed in v0.6; steep corners may require separate strokes. Nearby parallel surfaces with similar normals can still share a projected stamp because the current projection has no depth-thickness limit.
+- Mask Smooth still samples a 3x3 UV-neighbourhood. It is not island-aware and may sample a neighbouring chart where UV gutters are too narrow.
+- No automatic mask padding/dilation or mip-bleed correction is implemented.
+- The complete temporary UV raster mesh is drawn per stamp, so painting cost scales with target triangle count and stamp count. Large meshes require profiling and later spatial/batched optimization.
 
-The first production target should be mobile-friendly: opaque surface, no screen-space effects, no runtime painting, no unnecessary normal/metallic maps, and predictable sampler count. The tool must disclose texture-sample cost as layers increase.
+## Spline path authoring (v0.6)
 
-## UV constraints for initial release
+`SurfacePaintPathAsset` stores path points as target-local positions and normals, layer identifier, mask page/channel, brush parameters, brush references and a deterministic random seed. The Editor saves the target's `GlobalObjectId` as a string. It does not serialize a direct reference to a scene component from a project asset.
 
-- Static `MeshFilter` + `MeshRenderer` meshes.
-- Triangle topology.
-- A valid selected UV channel, default UV0.
-- UVs normally contained in 0–1 for the first painter backend.
-- Overlapping UV islands share mask pixels; this must be detected or clearly warned about before painting.
-- UV seam padding/dilation is required for reliable mipmapped texture output.
+The path is previewed using Catmull-Rom interpolation. Intermediate samples are projected onto the target MeshCollider and applied as one GPU Undo stroke. Random brush rotation/scale uses the stored seed and restores the Unity global random state after path application.
 
-The current validator checks basic UV validity but does **not** yet detect overlaps or create padding. Do not describe arbitrary UV support as production-ready until these tests exist.
+A path asset is a reusable path recipe. Applying it writes to the active mask page; it is not a separate non-destructive material layer. Width is currently constant and based on the brush radius. Closed paths, draggable handles, variable width/pressure curves and multi-path editing are future work.
 
-## Architecture rules
+GlobalObjectId caveats: save the scene at least once before creating path assets; the referenced scene must be loaded to resolve the ID; moving the target to another scene changes the ID. If the ID cannot resolve, the Editor asks whether to use the currently selected target.
 
-- No `UnityEditor` references in Runtime.
-- No modification of the source imported mesh asset; keep working data in profile/mask assets.
-- Prefer `sharedMesh` for inspection; do not instantiate or mutate the source mesh by accident.
-- Use `Undo` for all editor object changes.
-- Save mask output explicitly and preserve existing asset GUID/meta files when overwriting.
-- Keep target material assignment non-destructive. Use a documented binder/MaterialPropertyBlock path when the renderer integration is implemented.
-- No DRM, account login, usage telemetry or external web service is needed.
+## Painting and Undo
+
+- Each paint stroke stores one pre-stroke GPU snapshot for session Undo.
+- Spline application is treated as one stroke.
+- Ping-pong RenderTextures ensure the source and destination are never the same target for a Blit.
+- Save mask page explicitly to persist PNG output.
+- Random state is locally seeded/restored for repeatable spline stamp jitter.
+
+## Rendering roadmap
+
+The v0.6 build authors mask pages only. A profile-driven URP multi-layer shader/material binder is planned for v0.7, with albedo/tint/tiling and explicit texture-sample budgets. Runtime profile/mask consumption may be provided, but runtime painting is outside the current release scope.
