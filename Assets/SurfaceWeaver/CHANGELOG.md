@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6 – Scale-independent UV raster validation
+
+- Replaced the absolute local-space triangle-area rejection with scale-independent degeneracy validation so small local meshes with large Unity transforms are not rejected.
+
 ## 0.6.5 — cylindrical projection correctness
 - Replaced the planar-only brush reach test with a true world-space spherical distance test plus the existing projection-depth slab.
 - Made the surface-facing threshold mandatory in seam-aware mode (default 0.2), preventing stamps from reaching the far side of cylinders and perpendicular cap faces.
@@ -70,3 +74,14 @@
 
 ## 0.1.0
 - Added runtime target/profile/layer data and first-pass UV diagnostics.
+
+
+## 0.7.0 – Profile-driven URP rendering
+
+- Added a URP layered shader for a base surface plus up to four overlay layers stored in one packed RGBA mask page.
+- Added UV0 and World Planar XZ albedo mapping.
+- Added runtime binder that writes into a dedicated material asset without MaterialPropertyBlocks or `Renderer.material`.
+- Added Editor workflow to create/assign the rendering material and apply profile settings.
+- Added a shared UnityPerMaterial layout across UniversalForwardOnly, ShadowCaster and DepthOnly passes. The forward-only pass can render in URP Forward and Deferred renderer configurations.
+- Added v0.7 rendering setup and manual testing documentation.
+- Unity compilation, shader compilation, and Android profiling remain to be verified in the consuming project.

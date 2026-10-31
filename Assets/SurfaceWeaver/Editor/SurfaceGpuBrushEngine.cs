@@ -32,6 +32,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private static readonly int BrushCenterWorldId = Shader.PropertyToID("_BrushCenterWorld");
         private static readonly int BrushNormalWorldId = Shader.PropertyToID("_BrushNormalWorld");
         private static readonly int NormalCutoffId = Shader.PropertyToID("_NormalCutoff");
+        private static readonly int UseNormalFilterId = Shader.PropertyToID("_UseNormalFilter");
         private static readonly int ProjectionDepthId = Shader.PropertyToID("_ProjectionDepth");
         private static readonly int FlipRasterYId = Shader.PropertyToID("_FlipRasterY");
 
@@ -339,6 +340,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         /// position and face normal, duplicated vertices on UV seams receive the same
         /// world-space brush and the stamp is clipped naturally to each UV triangle.
         /// </summary>
+        /// <summary>
+        /// Backward-compatible overload for callers that do not expose normal filtering.
+        /// Normal filtering remains disabled for this overload.
+        /// </summary>
         public bool StampSurfaceMesh(
             Mesh uvRasterMesh,
             Matrix4x4 targetLocalToWorld,
@@ -346,6 +351,47 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             Vector3 brushNormalWorld,
             float radiusWorldUnits,
             float projectionDepthWorldUnits,
+            float normalCutoff,
+            float opacity,
+            float hardness,
+            int channelIndex,
+            bool erase,
+            Texture2D brushAlpha,
+            float brushRotationDegrees,
+            bool smooth,
+            out string error)
+        {
+            return StampSurfaceMesh(
+                uvRasterMesh,
+                targetLocalToWorld,
+                brushCenterWorld,
+                brushNormalWorld,
+                radiusWorldUnits,
+                projectionDepthWorldUnits,
+                false,
+                normalCutoff,
+                opacity,
+                hardness,
+                channelIndex,
+                erase,
+                brushAlpha,
+                brushRotationDegrees,
+                smooth,
+                out error);
+        }
+
+        /// <summary>
+        /// Stamps the UV-rasterized mesh. The explicit normal-filter flag is passed to the
+        /// matching HLSL uniform so the Painter UI and GPU shader use the same setting.
+        /// </summary>
+        public bool StampSurfaceMesh(
+            Mesh uvRasterMesh,
+            Matrix4x4 targetLocalToWorld,
+            Vector3 brushCenterWorld,
+            Vector3 brushNormalWorld,
+            float radiusWorldUnits,
+            float projectionDepthWorldUnits,
+            bool useNormalFilter,
             float normalCutoff,
             float opacity,
             float hardness,
@@ -404,7 +450,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             meshStampMaterial.SetVector(BrushCenterWorldId, brushCenterWorld);
             meshStampMaterial.SetVector(BrushNormalWorldId,
                 brushNormalWorld.sqrMagnitude > 0.000001f ? brushNormalWorld.normalized : Vector3.up);
-            meshStampMaterial.SetFloat(NormalCutoffId, Mathf.Clamp(normalCutoff, 0.05f, 0.95f));
+            meshStampMaterial.SetFloat(NormalCutoffId, Mathf.Clamp(normalCutoff, -1f, 1f));
+            meshStampMaterial.SetFloat(UseNormalFilterId, useNormalFilter ? 1f : 0f);
             meshStampMaterial.SetFloat(ProjectionDepthId, Mathf.Max(0.001f, projectionDepthWorldUnits));
             meshStampMaterial.SetFloat(FlipRasterYId, SystemInfo.graphicsUVStartsAtTop ? 1f : 0f);
             meshStampMaterial.SetFloat(RadiusWorldId, Mathf.Max(0.001f, radiusWorldUnits));

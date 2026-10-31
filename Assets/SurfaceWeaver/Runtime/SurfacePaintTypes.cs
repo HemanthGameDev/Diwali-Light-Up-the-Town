@@ -21,6 +21,17 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         Fill
     }
 
+
+    /// <summary>Coordinate source used to sample base and overlay albedo textures.</summary>
+    public enum SurfaceTextureMappingMode
+    {
+        /// <summary>Samples textures using the mesh UV0 coordinates.</summary>
+        MeshUV0,
+
+        /// <summary>Samples textures using world XZ coordinates. Best suited to mostly horizontal environments.</summary>
+        WorldPlanarXZ
+    }
+
     /// <summary>Texture mask storage layout.</summary>
     public enum SurfaceMaskStorageMode
     {

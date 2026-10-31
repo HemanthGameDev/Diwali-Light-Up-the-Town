@@ -24,8 +24,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private float brushRotation;
         private float brushScaleJitter;
         private float projectionDepthScale = 0.75f;
-        // Always-on facing gate. Rejects the far side of cylinders and perpendicular caps.
-        private float surfaceNormalCutoff = 0.2f;
+        // Off by default: the projection slab and radial falloff are the primary filters.
+        // This avoids false rejection on imported meshes whose face normals differ from hit normals.
+        private bool useSurfaceNormalFilter;
+        private float surfaceNormalCutoff = 0f;
         private bool randomizeSplineStamps;
         private bool closeSplinePath;
         private int undoMemoryBudgetMb = 64;
@@ -38,6 +40,13 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private bool showSelectedChannelPreview = true;
         private Material maskChannelPreviewMaterial;
         private int cachedPreviewChannel = -1;
+
+        // Live mask preview uses a temporary material instance instead of MaterialPropertyBlock.
+        // This avoids renderer-wide overrides and keeps the original material asset untouched.
+        private MeshRenderer previewRenderer;
+        private Material previewOriginalMaterial;
+        private Material previewMaterialInstance;
+        private int previewMaterialIndex = -1;
 
         private bool hasSceneHit;
         private Vector2 lastHitUv;
@@ -100,7 +109,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         {
             SceneView.duringSceneGui -= OnSceneGUI;
             StopStroke();
-            RestoreSavedMaskPreview();
+            RestorePreviewMaterial();
             DisposePaintSession();
             DisposeUvRasterMesh();
             if (maskChannelPreviewMaterial != null)
@@ -131,7 +140,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 return;
 
             StopStroke();
-            RestoreSavedMaskPreview();
+            RestorePreviewMaterial();
             DisposePaintSession();
             DisposeUvRasterMesh();
             pathPoints.Clear();
@@ -335,7 +344,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "Profile", profile, typeof(SurfacePaintProfile), false);
             if (newProfile != profile)
             {
-                RestoreSavedMaskPreview();
+                RestorePreviewMaterial();
                 DisposePaintSession();
                 profile = newProfile;
                 selectedLayerIndex = 0;
@@ -485,13 +494,22 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             {
                 projectionDepthScale = EditorGUILayout.Slider(
                     "Projection Depth (x Radius)", projectionDepthScale, 0.05f, 2f);
-                surfaceNormalCutoff = EditorGUILayout.Slider(
-                    "Surface Facing Threshold", surfaceNormalCutoff, 0.05f, 0.95f);
-                EditorGUILayout.HelpBox(
-                    "The facing gate is always enabled in seam-aware mode. It prevents painting the far side of cylinders and perpendicular cap faces. " +
-                    "0.2 is a good starting point for ordinary mesh surfaces.",
-                    MessageType.None);
+                useSurfaceNormalFilter = EditorGUILayout.ToggleLeft(
+                    "Filter by Surface Normal (optional)", useSurfaceNormalFilter);
+                if (useSurfaceNormalFilter)
+                {
+                    surfaceNormalCutoff = EditorGUILayout.Slider(
+                        "Normal Dot Cutoff", surfaceNormalCutoff, -1f, 1f);
+                }
+                else
+                {
+                    EditorGUILayout.HelpBox(
+                        "Normal filtering is disabled. Projection depth and brush radius still constrain stamps. " +
+                        "Enable this only when you need to reject nearby surfaces with different facing directions.",
+                        MessageType.None);
+                }
             }
+            ResolveMaskPreviewPropertyForCurrentTarget();
             maskPreviewProperty = EditorGUILayout.TextField("Preview Shader Property", maskPreviewProperty);
             bool brushFieldsChanged = EditorGUI.EndChangeCheck();
             if (newBrushPreset != brushPreset)
@@ -1179,6 +1197,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 worldNormal,
                 stampRadius,
                 Mathf.Max(0.001f, stampRadius * projectionDepthScale),
+                useSurfaceNormalFilter,
                 surfaceNormalCutoff,
                 brushOpacity,
                 brushHardness,
@@ -1843,18 +1862,128 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void BindMaskPreview(Texture texture)
         {
-            if (target == null || string.IsNullOrWhiteSpace(maskPreviewProperty))
+            if (target == null)
                 return;
 
-            MeshRenderer renderer;
-            if (!target.TryGetRenderer(out renderer))
+            ResolveMaskPreviewPropertyForCurrentTarget();
+            if (string.IsNullOrWhiteSpace(maskPreviewProperty))
                 return;
 
-            MaterialPropertyBlock block = new MaterialPropertyBlock();
-            renderer.GetPropertyBlock(block);
-            block.SetTexture(maskPreviewProperty, texture);
-            renderer.SetPropertyBlock(block);
-            EditorUtility.SetDirty(renderer);
+            if (!target.TryGetRenderer(out MeshRenderer renderer) || renderer == null)
+                return;
+
+            Material[] materials = renderer.sharedMaterials;
+            int matchingIndex = -1;
+            for (int i = 0; i < materials.Length; i++)
+            {
+                if (materials[i] != null && materials[i].HasProperty(maskPreviewProperty))
+                {
+                    matchingIndex = i;
+                    break;
+                }
+            }
+
+            if (matchingIndex < 0)
+            {
+                RestorePreviewMaterial();
+                return;
+            }
+
+            Material slotMaterial = materials[matchingIndex];
+            bool samePreviewSlot = previewRenderer == renderer &&
+                                   previewMaterialIndex == matchingIndex &&
+                                   previewMaterialInstance != null &&
+                                   slotMaterial == previewMaterialInstance;
+
+            if (!samePreviewSlot)
+            {
+                RestorePreviewMaterial();
+
+                // RestorePreviewMaterial may have changed the slot array. Read it again.
+                materials = renderer.sharedMaterials;
+                if (matchingIndex >= materials.Length || materials[matchingIndex] == null)
+                    return;
+
+                previewOriginalMaterial = materials[matchingIndex];
+                previewMaterialInstance = new Material(previewOriginalMaterial)
+                {
+                    name = previewOriginalMaterial.name + " (SurfaceWeaver Live Preview)",
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+                previewRenderer = renderer;
+                previewMaterialIndex = matchingIndex;
+
+                materials[matchingIndex] = previewMaterialInstance;
+                renderer.sharedMaterials = materials;
+            }
+
+            if (previewMaterialInstance != null && previewMaterialInstance.HasProperty(maskPreviewProperty))
+            {
+                previewMaterialInstance.SetTexture(maskPreviewProperty, texture);
+                // The clone is HideAndDontSave. Do not mark the source material asset dirty.
+                SceneView.RepaintAll();
+            }
+        }
+
+        /// <summary>
+        /// Restores the exact material slot replaced by the temporary editor preview instance.
+        /// No MaterialPropertyBlock is created or modified by SurfaceWeaver's live preview.
+        /// </summary>
+        private void RestorePreviewMaterial()
+        {
+            if (previewRenderer != null && previewMaterialInstance != null)
+            {
+                Material[] materials = previewRenderer.sharedMaterials;
+                if (previewMaterialIndex >= 0 && previewMaterialIndex < materials.Length &&
+                    materials[previewMaterialIndex] == previewMaterialInstance)
+                {
+                    materials[previewMaterialIndex] = previewOriginalMaterial;
+                    previewRenderer.sharedMaterials = materials;
+                }
+            }
+
+            if (previewMaterialInstance != null)
+            {
+                if (Application.isPlaying)
+                    UnityEngine.Object.Destroy(previewMaterialInstance);
+                else
+                    UnityEngine.Object.DestroyImmediate(previewMaterialInstance);
+            }
+
+            previewRenderer = null;
+            previewOriginalMaterial = null;
+            previewMaterialInstance = null;
+            previewMaterialIndex = -1;
+        }
+
+        /// <summary>
+        /// Keeps the live editor preview compatible with both the original Shader Graph contract
+        /// (_PaintMask) and the v0.7 layered URP shader contract (_MaskPage0).
+        /// The layered shader samples the packed RGBA page through _MaskPage0; it intentionally
+        /// does not expose the legacy _PaintMask property.
+        /// </summary>
+        private void ResolveMaskPreviewPropertyForCurrentTarget()
+        {
+            if (target == null)
+                return;
+
+            // Preserve an explicitly configured property whenever the current renderer supports it.
+            if (RendererHasProperty(target, maskPreviewProperty))
+                return;
+
+            // Prefer the v0.7 packed page when the generated SurfaceWeaver material is assigned.
+            if (RendererHasProperty(target, "_MaskPage0"))
+            {
+                maskPreviewProperty = "_MaskPage0";
+                return;
+            }
+
+            // Retain compatibility with older Shader Graph materials.
+            if (RendererHasProperty(target, "_PaintMask"))
+            {
+                maskPreviewProperty = "_PaintMask";
+                return;
+            }
         }
 
         private static bool RendererHasProperty(SurfacePaintTarget paintTarget, string propertyName)

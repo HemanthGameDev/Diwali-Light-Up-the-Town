@@ -92,6 +92,26 @@ GlobalObjectId caveats: save the scene at least once before creating path assets
 - Save mask page explicitly to persist PNG output.
 - Random state is locally seeded/restored for repeatable spline stamp jitter.
 
-## Rendering roadmap
+## Rendering roadmap (historical v0.6 status)
 
-The v0.6 build authors mask pages only. A profile-driven URP multi-layer shader/material binder is planned for v0.7, with albedo/tint/tiling and explicit texture-sample budgets. Runtime profile/mask consumption may be provided, but runtime painting is outside the current release scope.
+At v0.6, the build authored mask pages only. A profile-driven URP multi-layer shader/material binder is planned for v0.7, with albedo/tint/tiling and explicit texture-sample budgets. Runtime profile/mask consumption may be provided, but runtime painting is outside the current release scope.
+
+
+## v0.7 profile-driven URP rendering
+
+`SurfacePaintProfile` now includes `SurfaceTextureMappingMode` for albedo sampling: Mesh UV0 or World Planar XZ. The mask remains on UV0 to match the current paint backend.
+
+`SurfacePaintMaterialBinder` reads the profile and writes its values into a dedicated generated `.mat` asset assigned to one MeshRenderer material slot. It uses `sharedMaterials` (not `Renderer.material`) and does not use `MaterialPropertyBlock`; Unity documents that MaterialPropertyBlocks are not compatible with the SRP Batcher in URP. Use a distinct generated material for each distinct profile.
+
+The v0.7 shader `HemanthGameDev/SurfaceWeaver/URP Layered Surface` blends one base albedo with up to four ordered overlay layers. The four overlay masks come from R/G/B/A channels of one packed RGBA page. The packed mask is sampled once per pixel and its channels are reused. The shader uses a shared `UnityPerMaterial` layout across UniversalForwardOnly, ShadowCaster and DepthOnly passes. `UniversalForwardOnly` renders through the forward path in both URP Forward and Deferred renderer configurations; a `DepthNormalsOnly` pass for SSAO and a Meta pass for lightmap baking are not included. It supports main light, SH ambient, optional additional lights, fog, shadow reception and shadow casting.
+
+Texture mapping applies to albedo only: Mesh UV0 is suitable for props and curved meshes; World Planar XZ is for mostly horizontal environment surfaces and can stretch on vertical geometry. Mask sampling always uses UV0.
+
+### v0.7 rendering limits
+
+- One packed RGBA mask page and four overlay layers maximum.
+- `SeparateTextures` storage is not supported by the v0.7 binder.
+- One profile bound to one selected MeshRenderer material slot; multi-submesh binding is not implemented.
+- No normal maps, metallic/smoothness maps, height blending, triplanar mapping or per-layer blend modes.
+- Baked lightmap sampling is not implemented; ambient probe SH and direct URP lights are used.
+- Mobile performance and shader variants must be profiled on target Android devices before any performance claim.

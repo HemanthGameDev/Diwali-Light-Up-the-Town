@@ -17,6 +17,7 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         [SerializeField] private Texture2D baseAlbedo;
         [SerializeField] private Color baseTint = Color.white;
         [SerializeField] private Vector2 baseTiling = Vector2.one;
+        [SerializeField] private SurfaceTextureMappingMode textureMappingMode = SurfaceTextureMappingMode.MeshUV0;
 
         [Header("Painted Surface Layers")]
         [SerializeField] private List<SurfaceLayerDefinition> paintLayers =
@@ -31,6 +32,7 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         public Texture2D BaseAlbedo => baseAlbedo;
         public Color BaseTint => baseTint;
         public Vector2 BaseTiling => baseTiling;
+        public SurfaceTextureMappingMode TextureMappingMode => textureMappingMode;
         public IReadOnlyList<SurfaceLayerDefinition> PaintLayers => paintLayers;
         public SurfaceMaskStorageMode MaskStorageMode => maskStorageMode;
         public int MaskResolution => maskResolution;

@@ -1,104 +1,92 @@
-## Current build
+# SurfaceWeaver v0.7.0
 
-SurfaceWeaver v0.6.5. This repair makes seam-aware projection surface-facing by default, uses a 3D spherical brush reach test, and clips rejected fragments so prior accepted mask writes are preserved.
+SurfaceWeaver is an Editor-focused custom-mesh surface painting tool for Unity 6 URP. The v0.6.6 authoring foundation supports UV0 mask painting, RGBA channels, brushes, Undo/Redo, UV diagnostics, and spline/path authoring. v0.7.0 adds a first profile-driven URP layered rendering workflow that consumes the painted mask pages.
 
-# SurfaceWeaver
+## v0.7 rendering at a glance
 
-**Custom-mesh surface authoring for Unity URP.**
+- One base albedo surface plus up to four ordered overlay surfaces.
+- One packed linear RGBA mask page: R, G, B, and A each drive one overlay.
+- Per-surface albedo texture, tint, tiling, and overlay opacity.
+- Albedo mapping: Mesh UV0 or World Planar XZ.
+- Mask lookup always uses UV0 to match the existing painter.
+- A dedicated material asset is generated and configured from the `SurfacePaintTarget` Inspector.
+- One selected `MeshRenderer` material slot per target.
 
-SurfaceWeaver is an Editor-first tool for authoring layered material masks on custom static meshes such as Blender-exported environments. The development build includes reusable surface profiles, custom mesh targets, Scene View picking and previews, GPU mask painting, brush presets, Undo/Redo, PNG persistence, UV diagnostics, seam-aware world-space UV raster projection, and spline/path painting.
-
-## Current development version
-
-`0.6.5` — cylindrical projection correctness: mandatory facing gate, spherical brush reach, rejected-fragment clipping, and imported face-normal orientation handling.
+This is an initial rendering implementation, not a claim of completed mobile optimization. Profile the shader on target Android devices before production use.
 
 ## Requirements
 
 - Unity 6 project using the Universal Render Pipeline (URP).
-- A GameObject with `MeshFilter`, `MeshRenderer`, and a non-convex `MeshCollider`.
-- Readable mesh data (enable Read/Write in Model Import Settings for imported meshes).
-- A valid UV0 layout with coordinates inside the normalized 0–1 range for the current mask workflow.
-- Triangle submeshes for rasterization; non-triangle submeshes are skipped and reported.
-- A saved `SurfacePaintProfile` asset with Mask Storage set to Packed RGBA Pages.
-- The scene should be saved at least once before saving reusable path assets, because path assets resolve their target using a `GlobalObjectId`.
+- A GameObject with `MeshFilter`, `MeshRenderer`, `SurfacePaintTarget`, and a non-convex `MeshCollider` for Editor painting.
+- For imported meshes, enable Read/Write in Model Import Settings when required by the painting backend.
+- A valid UV0 layout within the normalized 0–1 range for mask painting.
+- Triangle submeshes for UV raster painting; non-triangle submeshes are skipped and reported.
+- A `SurfacePaintProfile` with Mask Storage set to `PackedRgbaPages`.
 
-## Quick start
+## Quick start: paint masks
 
 1. Import `Assets/SurfaceWeaver` into a backup Unity project.
 2. Open **Window > SurfaceWeaver > Painter**.
 3. Assign a target with a `MeshFilter` and `MeshRenderer`, and add `SurfacePaintTarget` if required.
-4. Add/refresh a non-convex `MeshCollider`; it must reference the same mesh as the target `MeshFilter`.
-5. Create or assign a `SurfacePaintProfile`.
-6. Set Mask Storage to **Packed RGBA Pages** and add one or more enabled paint layers.
-7. Create or load a black mask page for the selected layer.
-8. Use **Seam-Aware Mesh Projection** for the world-space UV raster backend.
-9. Hold the left mouse button over the target in Scene View to paint, erase, or smooth. Alt remains available for Scene View navigation.
-10. Save the mask page as a PNG asset to persist changes. Undo/Redo history is session-only.
-11. Use **Validate UV Channel** before painting to inspect UV range, degenerate triangles, overlaps, and geometric seams.
-12. For paths, enable **Path Authoring**, click two or more points on the mesh, then Save Path Asset or Apply Spline.
+4. Add/refresh a non-convex `MeshCollider` that references the same mesh as the target `MeshFilter`.
+5. Create or assign a `SurfacePaintProfile` and select **Packed RGBA Pages**.
+6. Add overlay layers and create/load a black mask page for the selected layer.
+7. Use Seam-Aware Mesh Projection for world-space UV-raster painting.
+8. Hold the left mouse button over the target in Scene View to paint, erase, or smooth. Alt remains available for Scene View navigation.
+9. Save the mask page as a PNG asset. Undo/Redo history is session-only.
+10. Use **Validate UV Channel** before painting to inspect UV range, degenerate triangles, overlaps, and geometric seams.
+11. For paths, enable **Path Authoring**, click two or more points on the mesh, then use Apply Spline or Save Path Asset.
 
-## Seam-aware UV raster projection
+## Quick start: render profile layers
 
-The Editor builds a temporary raster mesh from the source mesh's triangle submeshes. Each source triangle is duplicated in UV0 space and carries its original local-space vertex position plus a per-triangle local face normal in extra vertex channels. The temporary mesh is drawn into the mask RenderTexture. The stamp shader reconstructs each pixel's world position, compares it with the world-space brush centre and normal, then updates only the selected RGBA channel.
+1. Select the target and assign its `SurfacePaintProfile`.
+2. Set the profile's Base Albedo, Base Tint, Base Tiling, and Texture Mapping Mode.
+3. Add up to four overlay layers. The profile assigns the next available channel in page 0 (R, G, B, A).
+4. Assign each layer's Albedo Texture, Tint, Tiling, and Opacity. Ensure mask page 0 is saved and assigned in the profile.
+5. For curved props such as cylinders, choose **Mesh UV0** texture mapping. For mostly horizontal ground, choose **World Planar XZ**; this is planar mapping, not triplanar mapping, and it can stretch on vertical surfaces.
+6. In the `SurfacePaintTarget` Inspector, click **Create / Assign SurfaceWeaver URP Material** and save the generated `.mat` inside `Assets`.
+7. After changing profile properties or replacing a mask page asset, click **Apply Profile to Renderer Now**.
+8. Enter Play Mode and verify the binder applies the profile to the assigned material slot.
 
-This means a world-space stamp can affect matching surface areas represented by different UV charts at a geometric seam. It is a projection workflow, not automatic UV unwrapping or island stitching. The raster mesh is cached for the target and rebuilt when the source mesh reference changes.
+## Layer and mask model
 
-### Projection constraints
+- Base surface is always visible; its albedo is multiplied by Base Tint.
+- Each enabled overlay samples its albedo texture and tint, reads its assigned channel from the packed RGBA mask, multiplies the mask by the layer opacity, then blends over the current result.
+- Layers are composited in profile order; later layers appear above earlier layers where their masks overlap.
+- The shader samples the packed RGBA mask once per pixel and reuses its channels for all overlay layers.
+- Masks are linear RGBA32 data. Import mask textures with sRGB disabled, Clamp wrapping, and Bilinear filtering unless the mask asset utility sets these automatically.
+- Albedo textures should use sRGB and Repeat wrapping when tiled.
 
-- UV0 must be normalized to the 0–1 range. Out-of-range UVs are rejected by the raster painter rather than silently clipped.
-- UV overlaps/stacked charts are ambiguous: separate surfaces that occupy the same mask pixels cannot store independent masks. Run UV overlap diagnostics and resolve unintended overlaps before painting.
-- Non-triangle submeshes are skipped and surfaced as a warning.
-- Seam-aware stamps use a world-space spherical reach test, an always-on face-facing threshold (default 0.2), and a configurable projection-depth slab. The facing threshold prevents the brush from painting the far side of cylinders and perpendicular cap faces. Lower/raise the threshold cautiously for hard-surface or curved meshes.
-- Smooth is a local UV-pixel neighbourhood operation; it is not yet island-aware and should be used away from narrow chart gutters/seams.
-- No automatic UV gutter dilation/padding or mip-bleed correction is included in v0.6.
-- The temporary raster mesh is drawn for each stamp. Large/high-poly meshes may make authoring slower; profile performance before production use.
+## Rendering implementation notes
 
-## Spline/path authoring
+The shader name is `HemanthGameDev/SurfaceWeaver/URP Layered Surface`. It has a `UniversalForwardOnly` lighting pass plus custom `ShadowCaster` and `DepthOnly` passes. It supports main-light direct diffuse, SH ambient, optional additional lights, fog, shadow reception, and shadow casting. It uses a consistent `UnityPerMaterial` constant buffer layout and does not use `MaterialPropertyBlock`; Unity documents that MaterialPropertyBlocks make a renderer incompatible with the SRP Batcher in URP. The binder writes profile values into a dedicated material asset instead. Keep a different generated material for each distinct profile.
 
-- Enable **Path Authoring** and click the selected target in Scene View to add anchors.
-- The preview uses Catmull-Rom interpolation between anchors.
-- Apply Spline projects intermediate samples back onto the target MeshCollider and paints the active layer as one Undo step.
-- Seam-aware mode stamps across matching UV charts; legacy mode also applies but can leave gaps at UV seams.
-- Brush radius controls approximate path half-width; the current path tool uses one constant radius and does not yet support a per-anchor width/pressure curve or editable path handles. Closed-loop paths are supported.
-- A saved `SurfacePaintPathAsset` stores target-local anchor positions and normals, layer identifier, brush settings, and a deterministic random seed.
-- The path asset stores the target's `GlobalObjectId` as text rather than a direct scene-component reference. The scene must have been saved at least once and must be loaded for automatic resolution. If it cannot resolve, the user may explicitly load points onto the currently selected target.
-- Per-stamp random brush rotation/size variation is off by default for paths; enable it when using scatter-like effects.
-- Applying a path modifies the active mask page. The path asset preserves the path recipe, not a separate non-destructive layer stack; use Undo or a duplicate mask page to revert/reapply safely.
+## Deliberate v0.7 limitations
 
-## Mask and shader details
-
-- Mask pages use linear RGBA32 data; R, G, B and A store four independent grayscale masks.
-- Paint/erase updates only the active channel and preserves the other channels.
-- GPU operations use ping-pong RenderTextures; the same texture is never sampled and written in one Blit operation.
-- Undo/Redo uses session-only GPU snapshots with a configurable memory budget. Save the PNG mask to persist the current page.
-- The current painter writes masks; full profile-driven multi-layer URP material generation/binding is still planned for v0.7. A compatible preview texture property is required for live target preview.
-
-## UV diagnostics
-
-The validator reports UV range, non-finite values, degenerate triangles, positive-area overlapping triangle pairs (not unique island pairs), and geometric seam edges. Overlap candidate-pair analysis is bounded; a partial report is not a clean bill of health. Diagnostics do not unwrap or modify the source mesh.
-
-See `Documentation/UV_Diagnostics_v0.5.md`, `Documentation/UV_Seam_Projection_v0.6.md`, and the version-specific hotfix notes.
-
-## Current limitations
-
-- Static `MeshFilter` + `MeshRenderer` targets; skinned meshes are not supported.
-- UV0 only for the current raster painting backend.
-- Packed RGBA mask pages only; separate grayscale storage is not supported.
-- One selected mesh target is painted at a time; multi-target batch workflows are pending.
-- No automatic UV island padding/dilation or mip-gutter correction.
-- Overlapping/stacked UVs remain inherently ambiguous for independent painting.
-- Smooth remains UV-neighbourhood based and is not seam-aware.
-- Path anchors can be added/removed, but there are no draggable Bezier handles, variable width/pressure profiles, or fully non-destructive re-editable paint layers yet.
-- The current package is an Editor authoring tool. A dedicated runtime painting API and profile-driven URP multi-layer material are not included yet.
-- The temporary UV raster mesh is processed across all source triangles on each stamp; large meshes need profiling and future optimization.
+- One packed RGBA mask page and up to four overlay layers, plus the base surface.
+- `SeparateTextures` mask storage is not supported by the v0.7 shader/binder.
+- One profile and one selected `MeshRenderer` material slot per binder; multi-submesh profile binding is not implemented.
+- Masks always sample UV0. Set `SurfacePaintTarget.UvChannel` to 0.
+- World Planar XZ is planar, not triplanar, and can stretch on vertical or curved surfaces.
+- No normal maps, metallic/smoothness maps, height blending, per-layer blend modes, additional mask pages, or runtime painting API.
+- No `DepthNormalsOnly` pass for URP SSAO and no Meta pass for baked lightmap generation/sampling.
+- Skinned meshes are not supported; the current painter targets static `MeshFilter` + `MeshRenderer` objects.
+- Overlapping/stacked UVs cannot store independent masks in the same texels. No automatic UV island padding/dilation or mip-gutter correction is included yet.
+- Smooth remains a local UV-neighbourhood operation and is not seam-aware.
+- Spline width is constant; draggable handles and per-anchor width/pressure curves are deferred.
+- Large/high-poly meshes and repeated stamps need profiling and future batching/spatial optimization.
+- No Android performance claim is made until the shader is profiled on target devices.
 
 ## Package layout
 
-- `Runtime/` — target/profile/layer/brush/path data types; no UnityEditor dependency.
-- `Editor/` — painter window, picker, GPU mask engine, temporary UV raster mesh, spline authoring, UV diagnostics, and persistence.
+- `Runtime/` — target/profile/layer/brush/path data types and runtime material binder; no `UnityEditor` dependency.
+- `Editor/` — Painter window, picker, GPU mask engine, UV raster mesh, spline authoring, UV diagnostics, persistence, and custom inspectors.
 - `Editor/Shaders/` — hidden GPU mask-stamp shaders.
-- `Documentation/` — architecture, roadmap, build notes and manual test plans.
+- `Shaders/` — runtime layered URP surface shader.
+- `Documentation/` — architecture, roadmap, build notes, setup guide, and manual test plans.
 
 ## Validation status
 
-This is a development build. Static source and package checks were performed in the packaging environment, but it has not been compiled or exercised in the target Unity Editor or graphics APIs. Import it into a backup project and complete `Documentation/Hotfix_Test_Plan_v0.6.1.md` before using production meshes.
+v0.7.0 source is prepared, but it has not been compiled inside Unity 6 or passed URP shader compilation in the consuming project. Complete `Documentation/Manual_Test_Plan_v0.7.0.md` in a duplicate scene/profile before using the rendering workflow on production assets. Then profile 1, 2, and 4 overlay configurations on actual Android hardware.
+
+See `Documentation/Build_Notes_v0.7.0.md`, `Documentation/Layered_URP_Shader_Guide.md`, and `Documentation/Manual_Test_Plan_v0.7.0.md`.

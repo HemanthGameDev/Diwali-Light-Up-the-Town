@@ -15,6 +15,7 @@ MonoBehaviour:
   baseAlbedo: {fileID: 2800000, guid: 1ec2cef6eefb69049bcdf6ec11cb0407, type: 3}
   baseTint: {r: 1, g: 1, b: 1, a: 1}
   baseTiling: {x: 1, y: 1}
+  textureMappingMode: 0
   paintLayers:
   - id: 71b916c3592346258a0ce4811c56d4e0
     displayName: Dirt
@@ -24,6 +25,33 @@ MonoBehaviour:
     opacity: 1
     maskPageIndex: 0
     maskChannel: 0
+    enabled: 1
+  - id: 71b916c3592346258a0ce4811c56d4e0
+    displayName: Grass
+    albedoTexture: {fileID: 2800000, guid: 2723977a04cad824b8fd3d541907f9fd, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 0}
+    tiling: {x: 1, y: 1}
+    opacity: 1
+    maskPageIndex: 0
+    maskChannel: 1
+    enabled: 1
+  - id: 71b916c3592346258a0ce4811c56d4e0
+    displayName: Mud
+    albedoTexture: {fileID: 2800000, guid: 91fa430e5dce83e43a745aa99bea2269, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 0}
+    tiling: {x: 1, y: 1}
+    opacity: 1
+    maskPageIndex: 0
+    maskChannel: 2
+    enabled: 1
+  - id: 8a5418c6bb504cf8ae06ea94d7ed0a82
+    displayName: Rock
+    albedoTexture: {fileID: 2800000, guid: 7c0b23962a63f97499f20ed17bda855d, type: 3}
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    tiling: {x: 1, y: 1}
+    opacity: 1
+    maskPageIndex: 0
+    maskChannel: 3
     enabled: 1
   maskStorageMode: 0
   maskResolution: 1024
