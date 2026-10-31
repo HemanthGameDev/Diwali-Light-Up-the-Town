@@ -59,6 +59,8 @@ Shader "Hidden/SurfaceWeaver/MaskStamp"
             float _UseBrushAlpha;
             float _BrushRotation;
             float _FillMode;
+            float _SmoothMode;
+            float4 _MainTex_TexelSize;
 
             float GetChannel(float4 value, int channel)
             {
@@ -143,7 +145,26 @@ Shader "Hidden/SurfaceWeaver/MaskStamp"
 
                 float amount = saturate(_Opacity * radialFalloff * brushAlpha);
                 float oldValue = GetChannel(source, channel);
-                float newValue = lerp(oldValue, _TargetValue, amount);
+                float targetValue = _TargetValue;
+
+                // Smooth only the selected mask channel. A compact 3x3 Gaussian-like
+                // neighborhood keeps the operation local and preserves the other RGBA channels.
+                if (_SmoothMode > 0.5)
+                {
+                    float2 texel = _MainTex_TexelSize.xy;
+                    float sum = oldValue * 4.0;
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv + float2(texel.x, 0.0)), channel) * 2.0;
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv - float2(texel.x, 0.0)), channel) * 2.0;
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv + float2(0.0, texel.y)), channel) * 2.0;
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv - float2(0.0, texel.y)), channel) * 2.0;
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv + texel), channel);
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv - texel), channel);
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv + float2(texel.x, -texel.y)), channel);
+                    sum += GetChannel(SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv + float2(-texel.x, texel.y)), channel);
+                    targetValue = sum / 16.0;
+                }
+
+                float newValue = lerp(oldValue, targetValue, amount);
                 return SetChannel(source, channel, newValue);
             }
             ENDHLSL

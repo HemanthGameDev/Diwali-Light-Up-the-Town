@@ -440,7 +440,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
             directBrushAlpha = (Texture2D)EditorGUILayout.ObjectField(
                 "Brush Alpha Override", directBrushAlpha, typeof(Texture2D), false);
-            operationToolbar = GUILayout.Toolbar(operationToolbar, new[] { "Paint", "Erase" });
+            operationToolbar = GUILayout.Toolbar(operationToolbar, new[] { "Paint", "Erase", "Smooth" });
             paintingEnabled = EditorGUILayout.ToggleLeft("Enable Scene View Painting", paintingEnabled);
             brushRadius = EditorGUILayout.Slider("Radius (World Units)", brushRadius, 0.05f, 20f);
             brushOpacity = EditorGUILayout.Slider("Opacity", brushOpacity, 0.01f, 1f);
@@ -538,37 +538,28 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    if (GUILayout.Button("Clear Selected Layer Channel") &&
-                        EditorUtility.DisplayDialog("Clear Layer Mask", "Clear only the selected layer channel? Other channels on this page will be preserved. This can be undone.", "Clear", "Cancel"))
+                    if (GUILayout.Button("Fill Selected Layer") &&
+                        EditorUtility.DisplayDialog("Fill Layer Mask",
+                            "Fill only the selected layer channel with white? Other channels will be preserved. This can be undone.",
+                            "Fill", "Cancel"))
                     {
-                        StopStroke();
-                        string error;
-                        if (gpuEngine.BeginStroke(out error))
-                        {
-                            if (gpuEngine.ClearChannel((int)layer.MaskChannel, out error))
-                            {
-                                gpuEngine.EndStroke();
-                                hasUnsavedChanges = true;
-                                BindWorkingMaskPreview();
-                                paintStatus = "Selected layer channel cleared. Undo is available until the session is closed.";
-                            }
-                            else
-                            {
-                                gpuEngine.CancelStroke(out _);
-                                paintStatus = error;
-                            }
-                        }
-                        else
-                        {
-                            paintStatus = error;
-                        }
+                        ApplyChannelFill(layer, 1f, "Filled selected layer channel.");
+                    }
+
+                    if (GUILayout.Button("Clear Selected Layer Channel") &&
+                        EditorUtility.DisplayDialog("Clear Layer Mask",
+                            "Clear only the selected layer channel? Other channels on this page will be preserved. This can be undone.",
+                            "Clear", "Cancel"))
+                    {
+                        ApplyChannelFill(layer, 0f, "Cleared selected layer channel.");
                     }
                 }
             }
 
             EditorGUILayout.HelpBox(
                 "Hold the left mouse button over the target in Scene View to paint. Hold Alt for normal Scene View navigation. " +
-                "Paint writes white into the selected channel; Erase writes black. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y (or Shift+Z) redoes. Save Mask PNG to persist changes.",
+                "Paint writes white, Erase writes black, and Smooth averages the selected channel locally. " +
+                "Fill/Clear affect the entire selected channel. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y (or Shift+Z) redoes. Save Mask PNG to persist changes.",
                 MessageType.Info);
             EditorGUILayout.LabelField("Painting Status", paintStatus);
 
@@ -580,6 +571,36 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     "Painting and saving will still work, but live surface preview needs a matching texture property in your shader.",
                     MessageType.Warning);
             }
+        }
+
+        private void ApplyChannelFill(SurfaceLayerDefinition layer, float value, string successMessage)
+        {
+            if (gpuEngine == null || !gpuEngine.IsInitialized || layer == null)
+                return;
+
+            StopStroke();
+            if (!gpuEngine.BeginStroke(out string error))
+            {
+                paintStatus = error;
+                Repaint();
+                return;
+            }
+
+            if (gpuEngine.SetChannelValue((int)layer.MaskChannel, value, out error))
+            {
+                gpuEngine.EndStroke();
+                hasUnsavedChanges = true;
+                BindWorkingMaskPreview();
+                paintStatus = successMessage + " Undo is available until the session is closed.";
+            }
+            else
+            {
+                gpuEngine.CancelStroke(out _);
+                paintStatus = error;
+            }
+
+            Repaint();
+            SceneView.RepaintAll();
         }
 
         private void CreateProfile()
@@ -713,12 +734,13 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
 
             bool erase = operationToolbar == 1;
+            bool smooth = operationToolbar == 2;
             Texture2D alpha = GetActiveBrushAlpha();
 
             if (!hasPreviousPaintHit || previousPaintHit.Target != currentHit.Target ||
                 HasUvDiscontinuity(previousPaintHit.Uv0, currentHit.Uv0))
             {
-                Stamp(currentHit.Uv0, worldPerUvU, worldPerUvV, layer, erase, alpha);
+                Stamp(currentHit.Uv0, worldPerUvU, worldPerUvV, layer, erase, smooth, alpha);
             }
             else
             {
@@ -732,7 +754,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 {
                     float t = i / (float)steps;
                     Vector2 uv = Vector2.Lerp(previousPaintHit.Uv0, currentHit.Uv0, t);
-                    Stamp(uv, worldPerUvU, worldPerUvV, layer, erase, alpha);
+                    Stamp(uv, worldPerUvU, worldPerUvV, layer, erase, smooth, alpha);
                 }
             }
 
@@ -740,9 +762,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             hasPreviousPaintHit = true;
             BindWorkingMaskPreview();
             hasUnsavedChanges = true;
-            paintStatus = erase
-                ? "Erasing selected layer. Save the mask page to persist changes."
-                : "Painting selected layer. Save the mask page to persist changes.";
+            paintStatus = smooth
+                ? "Smoothing selected layer mask. Save the mask page to persist changes."
+                : erase
+                    ? "Erasing selected layer. Save the mask page to persist changes."
+                    : "Painting selected layer. Save the mask page to persist changes.";
             Repaint();
         }
 
@@ -752,6 +776,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             Vector3 worldPerUvV,
             SurfaceLayerDefinition layer,
             bool erase,
+            bool smooth,
             Texture2D alpha)
         {
             float rotation = brushRotation;
@@ -774,6 +799,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     erase,
                     alpha,
                     rotation,
+                    smooth,
                     out error))
             {
                 paintStatus = error;
@@ -1121,6 +1147,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.LabelField("UV Entries", lastReport.UvCount.ToString());
             EditorGUILayout.LabelField("Out-of-range UVs", lastReport.OutOfRangeUvCount.ToString());
             EditorGUILayout.LabelField("Degenerate UV triangles", lastReport.DegenerateUvTriangleCount.ToString());
+            EditorGUILayout.LabelField("Overlapping UV triangle pairs", lastReport.OverlappingUvTrianglePairCount.ToString());
+            EditorGUILayout.LabelField("UV seam edges", lastReport.UvSeamEdgeCount.ToString());
+            EditorGUILayout.LabelField("Overlap candidate tests", lastReport.OverlapCandidatePairTests.ToString());
+            EditorGUILayout.LabelField("Overlap analysis", lastReport.OverlapAnalysisCompleted ? "Complete" : "Partial / safety limit reached");
             foreach (string error in lastReport.Errors)
                 EditorGUILayout.HelpBox(error, MessageType.Error);
             foreach (string warning in lastReport.Warnings)
@@ -1133,9 +1163,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         {
             EditorGUILayout.LabelField("Development Status", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Included: custom mesh targets, reusable profiles, first-pass UV diagnostics, Scene View picking, " +
-                "world-space brush preview, GPU paint/erase stamps, packed RGBA page selection and PNG persistence.\n\n" +
-                "Next: robust stroke undo/redo, UV seam/overlap diagnostics, brush scatter/jitter, smoothing and production shader integration.",
+                "Included: custom mesh targets, reusable profiles, UV range/degenerate/overlap/seam diagnostics, " +
+                "Scene View picking, world-space brush preview, GPU paint/erase/smooth stamps, selected-channel fill/clear, " +
+                "packed RGBA pages, starter brushes, stroke Undo/Redo and PNG persistence.\n\n" +
+                "Still planned: seam-aware cross-island brush propagation, island padding/dilation, spline/path painting, " +
+                "scatter placement, multi-object batch authoring, production multi-layer URP shader, runtime API and package validation.",
                 MessageType.None);
         }
     }

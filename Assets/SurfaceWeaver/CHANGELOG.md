@@ -1,30 +1,22 @@
 # Changelog
 
-## 0.4.0 - Undo/Redo and Starter Brush Library
-- Added bounded, in-memory GPU mask history with per-stroke Undo and Redo snapshots.
-- Added per-stroke commit and Escape-to-cancel behavior.
-- Added Undo/Redo buttons and Ctrl/Cmd+Z, Ctrl/Cmd+Y and Ctrl/Cmd+Shift+Z shortcuts while working in Scene View.
-- Made the Clear Selected Layer Channel operation undoable.
-- Added an adjustable Undo memory budget; older snapshots are trimmed when the budget is reached.
-- Extended brush presets with randomized scale.
-- Added an Editor utility to generate Soft Round, Hard Round, Grunge and Scatter starter brush presets and their linear alpha textures.
-- Added brush-library creation and preset selection controls to the Painter window.
-- Undo history is session-only; use Save Mask PNG to persist painted results.
+## 0.5.0
+- Added positive-area UV triangle overlap diagnostics with a bounded candidate-pair analysis.
+- Added geometric UV seam-edge diagnostics.
+- Added a GPU Smooth brush mode for the selected mask channel.
+- Added full-channel Fill and Clear operations that preserve other RGBA channels and support session Undo.
+- Updated diagnostics UI, build notes, and manual test plan.
 
-## 0.3.0 - GPU Brush Engine (first implementation)
-- Added a ping-pong RenderTexture GPU mask stamping backend.
-- Added paint and erase operations for one selected channel in a packed RGBA page.
-- Added world-space brush sizing derived from the hit triangle UV0-to-world basis.
-- Added continuous stroke interpolation based on world-space distance and brush spacing.
-- Added optional brush-alpha texture support, hardness, opacity and rotation.
-- Added black mask-page PNG creation, GPU readback, PNG persistence and profile references.
-- Added live preview through a configurable MaterialPropertyBlock texture property (default `_PaintMask`).
-- Added automatic page/channel assignment for newly created profile layers.
+## 0.4.0
+- Added GPU snapshot-based per-stroke Undo/Redo.
+- Added a starter brush library with Soft Round, Hard Round, Grunge, and Scatter presets.
+- Added brush rotation and scale jitter controls.
 
-## 0.2.0 - Scene View Preview
-- Added target-specific Scene View mesh picking and UV0 readout.
-- Added world-space brush footprint preview.
-- Added first-pass UV diagnostics.
+## 0.3.0
+- Added GPU-backed mask painting, erasing, RGBA channel preservation, and PNG persistence.
 
-## 0.1.0 - Foundation
-- Added target component, reusable surface profiles, layer definitions and brush preset data.
+## 0.2.0
+- Added Scene View target picking, UV hit information, and world-space brush preview.
+
+## 0.1.0
+- Added runtime target/profile/layer data and first-pass UV diagnostics.

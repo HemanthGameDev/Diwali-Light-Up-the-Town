@@ -24,6 +24,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private static readonly int UseBrushAlphaId = Shader.PropertyToID("_UseBrushAlpha");
         private static readonly int BrushRotationId = Shader.PropertyToID("_BrushRotation");
         private static readonly int FillModeId = Shader.PropertyToID("_FillMode");
+        private static readonly int SmoothModeId = Shader.PropertyToID("_SmoothMode");
 
         private RenderTexture readTexture;
         private RenderTexture writeTexture;
@@ -273,6 +274,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             bool erase,
             Texture2D brushAlpha,
             float brushRotationDegrees,
+            bool smooth,
             out string error)
         {
             error = string.Empty;
@@ -301,6 +303,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             stampMaterial.SetFloat(UseBrushAlphaId, brushAlpha != null ? 1f : 0f);
             stampMaterial.SetFloat(BrushRotationId, brushRotationDegrees * Mathf.Deg2Rad);
             stampMaterial.SetFloat(FillModeId, 0f);
+            stampMaterial.SetFloat(SmoothModeId, smooth ? 1f : 0f);
 
             try
             {
@@ -314,9 +317,13 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 error = "GPU brush stamp failed: " + exception.Message;
                 return false;
             }
+            finally
+            {
+                stampMaterial.SetFloat(SmoothModeId, 0f);
+            }
         }
 
-        public bool ClearChannel(int channelIndex, out string error)
+        public bool SetChannelValue(int channelIndex, float value, out string error)
         {
             error = string.Empty;
             if (!IsInitialized || stampMaterial == null)
@@ -332,9 +339,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
 
             stampMaterial.SetFloat(ChannelIndexId, channelIndex);
-            stampMaterial.SetFloat(TargetValueId, 0f);
+            stampMaterial.SetFloat(TargetValueId, Mathf.Clamp01(value));
             stampMaterial.SetFloat(OpacityId, 1f);
             stampMaterial.SetFloat(FillModeId, 1f);
+            stampMaterial.SetFloat(SmoothModeId, 0f);
             try
             {
                 ExecuteBlit();
@@ -344,13 +352,18 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
             catch (Exception exception)
             {
-                error = "Could not clear the selected mask channel: " + exception.Message;
+                error = "Could not fill the selected mask channel: " + exception.Message;
                 return false;
             }
             finally
             {
                 stampMaterial.SetFloat(FillModeId, 0f);
             }
+        }
+
+        public bool ClearChannel(int channelIndex, out string error)
+        {
+            return SetChannelValue(channelIndex, 0f, out error);
         }
 
         public Texture2D CreateReadbackTexture(out string error)
