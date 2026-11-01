@@ -55,7 +55,7 @@ Material:
     - _BaseTiling: {r: 4, g: 3, b: 0, a: 0}
     - _BaseTint: {r: 1, g: 1, b: 1, a: 1}
     - _Layer0Params: {r: 1.2, g: 0, b: 0, a: 1}
-    - _Layer0Tiling: {r: 4, g: 4, b: 0, a: 0}
+    - _Layer0Tiling: {r: 4, g: 5, b: 0, a: 0}
     - _Layer0Tint: {r: 1, g: 1, b: 1, a: 0}
     - _Layer1Params: {r: 2.5, g: 1, b: 0, a: 0.6}
     - _Layer1Tiling: {r: 5, g: 5, b: 0, a: 0}

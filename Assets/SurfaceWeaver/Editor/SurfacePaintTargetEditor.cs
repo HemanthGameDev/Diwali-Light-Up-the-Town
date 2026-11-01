@@ -26,19 +26,29 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             if (binder != null)
             {
+                EditorGUILayout.LabelField("Mask Update", EditorStyles.boldLabel);
                 EditorGUILayout.HelpBox(
-                    "Update Profile Bindings refreshes textures, mask data, layer count and channel assignments while preserving the material's existing tint, tiling and opacity. Use the reset button only when you deliberately want to overwrite those settings with the profile values.",
+                    "This safest update changes only the saved RGBA mask texture on the material. It does not change any other material property. Save the current mask in the Painter before using it if you have unsaved strokes.",
                     MessageType.Info);
 
-                if (GUILayout.Button("Update Profile Bindings (Preserve Material Tuning)"))
+                if (GUILayout.Button("Update Mask Only (Preserve All Material Settings)"))
+                    ApplyMaskPageToTarget(paintTarget, binder);
+
+                EditorGUILayout.Space(6f);
+                EditorGUILayout.LabelField("Profile Synchronization", EditorStyles.boldLabel);
+                EditorGUILayout.HelpBox(
+                    "Sync Profile Bindings refreshes profile texture references, mask reference and overlay count. It preserves material tint, tiling, mapping mode, and ALL layer Params components: X opacity, Y channel, Z page and W enabled/strength. Use Update Mask Only when you want to change nothing except the saved mask texture.",
+                    MessageType.Warning);
+
+                if (GUILayout.Button("Sync Profile Bindings (Preserve Material Tuning)"))
                     ApplyProfileToTarget(paintTarget, binder, false);
 
-                if (GUILayout.Button("Apply Profile Tuning (Overwrite Material)"))
+                if (GUILayout.Button("Reset Material from Profile (Overwrite All Settings)"))
                 {
                     if (EditorUtility.DisplayDialog(
-                            "Overwrite Material Tuning",
-                            "This will overwrite the current material's base/layer tint, tiling and opacity with the values stored in the SurfacePaintProfile. Continue?",
-                            "Apply Profile Tuning", "Cancel"))
+                            "Reset Material from Profile",
+                            "This will rebuild the material's profile bindings and overwrite base/layer tint, tiling and opacity with the values stored in the SurfacePaintProfile. Continue?",
+                            "Reset Material", "Cancel"))
                     {
                         ApplyProfileToTarget(paintTarget, binder, true);
                     }
@@ -75,6 +85,43 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.HelpBox(
                 "v0.7 supports one packed RGBA mask page and up to four overlay layers, plus the base surface. Use Mesh UV0 for curved props; World Planar XZ is intended for mostly horizontal environments. The generated material is dedicated to this profile/target; do not share it between targets with different profiles.",
                 MessageType.Info);
+        }
+
+        private static void ApplyMaskPageToTarget(
+            SurfacePaintTarget paintTarget,
+            SurfacePaintMaterialBinder binder)
+        {
+            SurfaceWeaverWindow.SuspendPreviewForMaterialApply(paintTarget);
+            bool applied = false;
+            string report;
+
+            try
+            {
+                if (paintTarget.TryGetRenderer(out MeshRenderer renderer) && renderer != null)
+                {
+                    Material[] slots = renderer.sharedMaterials;
+                    int index = binder.MaterialIndex;
+                    if (index >= 0 && index < slots.Length && slots[index] != null)
+                        Undo.RecordObject(slots[index], "Update SurfaceWeaver Mask Page");
+                }
+
+                applied = binder.ApplyMaskPageOnly(out report);
+
+                if (applied && paintTarget.TryGetRenderer(out renderer) && renderer != null)
+                {
+                    Material[] slots = renderer.sharedMaterials;
+                    int index = binder.MaterialIndex;
+                    if (index >= 0 && index < slots.Length && slots[index] != null)
+                        EditorUtility.SetDirty(slots[index]);
+                    AssetDatabase.SaveAssets();
+                }
+            }
+            finally
+            {
+                SurfaceWeaverWindow.ResumePreviewAfterMaterialApply(paintTarget);
+            }
+
+            EditorUtility.DisplayDialog("SurfaceWeaver", report, "OK");
         }
 
         private static void ApplyProfileToTarget(

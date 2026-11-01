@@ -4,9 +4,9 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
 {
     /// <summary>
     /// Applies a SurfacePaintProfile to a dedicated shared Material asset.
-    /// Profile binding updates textures and mask layout. Existing material tuning
-    /// (tint, tiling and opacity) is preserved unless the caller explicitly asks
-    /// to reapply the profile's tuning defaults.
+    /// Profile binding updates texture references, mask layout and overlay count.
+    /// Existing material tuning (mapping mode, tint, tiling and all layer Params
+    /// components) is preserved unless the caller explicitly reapplies profile values.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("SurfaceWeaver/Surface Paint Material Binder")]
@@ -74,8 +74,10 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         }
 
         /// <summary>
-        /// Updates profile bindings but preserves the material's existing tint,
-        /// tiling and opacity values. This is the safe default for an existing material.
+        /// Updates profile texture/mask bindings and overlay count while preserving
+        /// material mapping mode, tint, tiling and the complete Params vector
+        /// (X opacity, Y channel, Z page, W enabled/strength) for every layer.
+        /// This is the safe default for an existing material.
         /// </summary>
         public bool ApplyProfile(out string report)
         {
@@ -83,12 +85,68 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         }
 
         /// <summary>
-        /// Explicitly reapplies every value from the profile, including tint,
-        /// tiling and opacity. Use only when the user requests a tuning reset.
+        /// Explicitly reapplies every value from the profile, including mapping mode,
+        /// tint, tiling and all layer Params components. Use only when the user requests
+        /// a full material reset from the profile.
         /// </summary>
         public bool ApplyProfileSettings(out string report)
         {
             return ApplyProfileInternal(false, out report);
+        }
+
+        /// <summary>
+        /// Refreshes only the saved packed RGBA mask page on the bound material.
+        /// No textures, mapping mode, layer layout, tint, tiling, opacity, or other
+        /// material properties are changed. Save the current mask from the Painter
+        /// before using this method if there are unsaved strokes.
+        /// </summary>
+        public bool ApplyMaskPageOnly(out string report)
+        {
+            report = string.Empty;
+
+            if (target == null)
+            {
+                report = "No SurfacePaintTarget is assigned to the binder.";
+                return false;
+            }
+
+            if (!target.TryGetRenderer(out MeshRenderer targetRenderer) || targetRenderer == null)
+            {
+                report = "The target MeshRenderer is missing.";
+                return false;
+            }
+
+            Material[] materials = targetRenderer.sharedMaterials;
+            if (materialIndex < 0 || materialIndex >= materials.Length || materials[materialIndex] == null)
+            {
+                report = "Material index " + materialIndex + " is missing or outside the renderer's material slots.";
+                return false;
+            }
+
+            Material material = materials[materialIndex];
+            if (material.shader == null || material.shader.name != ShaderName || !material.HasProperty(MaskPage0Id))
+            {
+                report = "The selected material must use shader: " + ShaderName;
+                return false;
+            }
+
+            SurfacePaintProfile profile = target.Profile;
+            if (profile == null)
+            {
+                report = "No SurfacePaintProfile is assigned.";
+                return false;
+            }
+
+            Texture2D savedMaskPage = profile.GetMaskPage(0);
+            if (savedMaskPage == null)
+            {
+                report = "The profile has no saved mask page 0. Save the mask from the Painter first. The material was not changed.";
+                return false;
+            }
+
+            material.SetTexture(MaskPage0Id, savedMaskPage);
+            report = "Updated only Mask Page 0 on material '" + material.name + "'. All other material properties were left unchanged.";
+            return true;
         }
 
         private bool ApplyProfileInternal(bool preserveMaterialTuning, out string report)
@@ -125,8 +183,9 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
 
         /// <summary>
         /// Applies profile texture/mask bindings to a material. When preserveMaterialTuning
-        /// is true, existing material tint, tiling and opacity are retained. maskOverride
-        /// lets the editor Painter supply its live GPU mask without modifying the profile asset.
+        /// is true, existing mapping mode, tint, tiling and every layer Params component
+        /// are retained. maskOverride lets the editor Painter supply its live GPU mask
+        /// without modifying the profile asset.
         /// </summary>
         public static bool ApplyProfileToMaterial(
             SurfacePaintProfile profile,
@@ -174,21 +233,22 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
                 }
             }
 
-            // Base texture and mapping remain profile-driven. Tint and tiling are
-            // material tuning values and are preserved by the safe/default apply path.
-            material.SetTexture(BaseMapId,
-                profile.BaseAlbedo != null ? profile.BaseAlbedo : Texture2D.whiteTexture);
+            // The safe sync path updates profile-owned texture/mask bindings and the
+            // structural layer count, but it must not rewrite artist-edited material
+            // controls. This includes mapping mode and the complete RGBA-like Params
+            // vector (X=opacity, Y=mask channel, Z=page, W=enabled/strength).
+            if (profile.BaseAlbedo != null)
+                material.SetTexture(BaseMapId, profile.BaseAlbedo);
+            else if (!preserveMaterialTuning)
+                material.SetTexture(BaseMapId, Texture2D.whiteTexture);
 
-            Color baseTint = preserveMaterialTuning
-                ? material.GetColor(BaseTintId)
-                : profile.BaseTint;
-            Vector4 baseTiling = preserveMaterialTuning
-                ? material.GetVector(BaseTilingId)
-                : new Vector4(profile.BaseTiling.x, profile.BaseTiling.y, 0f, 0f);
-
-            material.SetColor(BaseTintId, baseTint);
-            material.SetVector(BaseTilingId, baseTiling);
-            material.SetFloat(MappingModeId, (float)profile.TextureMappingMode);
+            if (!preserveMaterialTuning)
+            {
+                material.SetColor(BaseTintId, profile.BaseTint);
+                material.SetVector(BaseTilingId,
+                    new Vector4(profile.BaseTiling.x, profile.BaseTiling.y, 0f, 0f));
+                material.SetFloat(MappingModeId, (float)profile.TextureMappingMode);
+            }
 
             Texture page0 = maskOverride != null ? maskOverride : profile.GetMaskPage(0);
             material.SetTexture(MaskPage0Id, page0 != null ? page0 : Texture2D.blackTexture);
@@ -199,46 +259,51 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
             for (int i = 0; i < MaxOverlayLayers; i++)
             {
                 SurfaceLayerDefinition layer = i < layerCount ? profile.PaintLayers[i] : null;
-                bool active = layer != null && layer.Enabled && layer.AlbedoTexture != null;
+                bool hasProfileTexture = layer != null && layer.AlbedoTexture != null;
+                bool active = hasProfileTexture && layer.Enabled;
+
+                if (preserveMaterialTuning)
+                {
+                    // Bind a supplied profile texture, but do not clear a material slot
+                    // merely because the profile layer is disabled or has no texture.
+                    if (hasProfileTexture)
+                        material.SetTexture(LayerMapIds[i], layer.AlbedoTexture);
+
+                    // Preserve every artist-controlled material value exactly. In
+                    // particular, do not re-import channel/page from the profile here.
+                    // Users may intentionally edit Params Y (channel) and Z (page)
+                    // directly on the material, just like opacity and enabled state.
+                    continue;
+                }
 
                 material.SetTexture(LayerMapIds[i],
                     active ? layer.AlbedoTexture : Texture2D.whiteTexture);
+                material.SetColor(LayerTintIds[i], active ? layer.Tint : Color.white);
+                material.SetVector(LayerTilingIds[i], active
+                    ? new Vector4(layer.Tiling.x, layer.Tiling.y, 0f, 0f)
+                    : new Vector4(1f, 1f, 0f, 0f));
 
-                Color layerTint = preserveMaterialTuning
-                    ? material.GetColor(LayerTintIds[i])
-                    : (active ? layer.Tint : Color.white);
-                Vector4 layerTiling = preserveMaterialTuning
-                    ? material.GetVector(LayerTilingIds[i])
-                    : (active
-                        ? new Vector4(layer.Tiling.x, layer.Tiling.y, 0f, 0f)
-                        : new Vector4(1f, 1f, 0f, 0f));
-                Vector4 previousParams = material.GetVector(LayerParamsIds[i]);
-                float opacity = preserveMaterialTuning
-                    ? Mathf.Clamp01(previousParams.x)
-                    : (active ? Mathf.Clamp01(layer.Opacity) : 0f);
-
-                material.SetColor(LayerTintIds[i], layerTint);
-                material.SetVector(LayerTilingIds[i], layerTiling);
-
+                float opacity = active ? Mathf.Clamp01(layer.Opacity) : 0f;
                 float channel = active ? (float)layer.MaskChannel : 0f;
                 float page = active ? layer.MaskPageIndex : 0f;
-                float enabled = active ? 1f : 0f;
+                float enabledStrength = active ? 1f : 0f;
                 material.SetVector(LayerParamsIds[i],
-                    new Vector4(opacity, channel, page, enabled));
+                    new Vector4(opacity, channel, page, enabledStrength));
             }
 
             report = "Applied profile '" + profile.name + "' to material '" + material.name +
                      "'. Bound " + layerCount + " overlay layer(s) using one packed RGBA mask page. " +
                      (preserveMaterialTuning
-                         ? "Existing material tint, tiling and opacity were preserved."
-                         : "Tint, tiling and opacity were copied from the profile.");
+                         ? "Preserved material tint, tiling, mapping mode and every layer Params component (X opacity, Y channel, Z page, W enabled/strength). Profile texture bindings, mask reference and overlay count were refreshed."
+                         : "All material settings, including tint, tiling, mapping mode and layer Params, were copied from the profile.");
             if (page0 == null && layerCount > 0)
                 report += " Warning: mask page 0 is not assigned, so overlay masks currently read as black.";
             return true;
         }
 
         /// <summary>
-        /// Copies only user-facing material tuning from one material to another.
+        /// Copies user-facing material tuning, including mapping mode and the full Params vector,
+        /// from one material to another.
         /// Used by the Painter's temporary preview instance so inspector edits to the
         /// saved material are reflected without changing the source .mat asset.
         /// </summary>
@@ -251,16 +316,15 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
 
             destination.SetColor(BaseTintId, source.GetColor(BaseTintId));
             destination.SetVector(BaseTilingId, source.GetVector(BaseTilingId));
+            destination.SetFloat(MappingModeId, source.GetFloat(MappingModeId));
 
             for (int i = 0; i < MaxOverlayLayers; i++)
             {
                 destination.SetColor(LayerTintIds[i], source.GetColor(LayerTintIds[i]));
                 destination.SetVector(LayerTilingIds[i], source.GetVector(LayerTilingIds[i]));
-
-                Vector4 destinationParams = destination.GetVector(LayerParamsIds[i]);
-                Vector4 sourceParams = source.GetVector(LayerParamsIds[i]);
-                destinationParams.x = sourceParams.x;
-                destination.SetVector(LayerParamsIds[i], destinationParams);
+                // Copy all Params components so the live preview matches the source
+                // material's custom opacity, channel, page and enabled state.
+                destination.SetVector(LayerParamsIds[i], source.GetVector(LayerParamsIds[i]));
             }
         }
 
