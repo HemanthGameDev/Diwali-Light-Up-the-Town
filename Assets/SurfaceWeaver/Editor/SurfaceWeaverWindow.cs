@@ -10,6 +10,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
     /// <summary>SurfaceWeaver authoring window with UV diagnostics and GPU mask painting.</summary>
     public sealed class SurfaceWeaverWindow : EditorWindow
     {
+        private static SurfaceWeaverWindow activeWindow;
+
         private SurfacePaintTarget target;
         private SurfacePaintProfile profile;
         private MeshUvValidationReport lastReport;
@@ -95,6 +97,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void OnEnable()
         {
+            activeWindow = this;
             SceneView.duringSceneGui += OnSceneGUI;
             if (Selection.activeGameObject != null)
             {
@@ -118,6 +121,34 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 maskChannelPreviewMaterial = null;
                 cachedPreviewChannel = -1;
             }
+
+            if (activeWindow == this)
+                activeWindow = null;
+        }
+
+        /// <summary>
+        /// Temporarily restores the source material before the target Inspector applies
+        /// profile bindings. This prevents an Apply click from editing the temporary preview clone.
+        /// </summary>
+        public static void SuspendPreviewForMaterialApply(SurfacePaintTarget selectedTarget)
+        {
+            if (activeWindow != null && activeWindow.target == selectedTarget)
+                activeWindow.RestorePreviewMaterial();
+        }
+
+        /// <summary>Rebuilds the live Painter preview after the source material has been updated.</summary>
+        public static void ResumePreviewAfterMaterialApply(SurfacePaintTarget selectedTarget)
+        {
+            if (activeWindow == null || activeWindow.target != selectedTarget)
+                return;
+
+            if (activeWindow.gpuEngine != null && activeWindow.gpuEngine.IsInitialized)
+                activeWindow.BindWorkingMaskPreview();
+            else
+                activeWindow.RestoreSavedMaskPreview();
+
+            activeWindow.Repaint();
+            SceneView.RepaintAll();
         }
 
         private void OnSelectionChange()
@@ -377,9 +408,15 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.PropertyField(serializedProfile.FindProperty("maskPages"), new GUIContent("Mask Pages"), true);
             EditorGUILayout.Space(4f);
             EditorGUILayout.PropertyField(serializedProfile.FindProperty("paintLayers"), new GUIContent("Paint Layers"), true);
+            EditorGUILayout.HelpBox(
+                "Profile tint, tiling and opacity are defaults. Once a material is created, its tuned values are preserved by Update Profile Bindings. Use Reset Material Tuning from Profile on the target Inspector only when you intentionally want to overwrite the material values.",
+                MessageType.Info);
 
             if (serializedProfile.ApplyModifiedProperties())
+            {
                 EditorUtility.SetDirty(profile);
+                RefreshLivePreviewProfileBindings();
+            }
 
             if (GUILayout.Button("Add Paint Layer"))
             {
@@ -387,6 +424,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 profile.AddLayer("Surface " + (profile.PaintLayers.Count + 1));
                 EditorUtility.SetDirty(profile);
                 AssetDatabase.SaveAssets();
+                RefreshLivePreviewProfileBindings();
             }
 
             EditorGUILayout.HelpBox(
@@ -448,8 +486,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (layer.MaskChannel != SurfaceMaskChannel.Red)
             {
                 EditorGUILayout.HelpBox(
-                    "The current one-channel preview shader must sample the selected channel to display this layer. " +
-                    "The GPU painter preserves and writes the selected RGBA channel correctly; profile-driven multi-layer rendering is a later milestone.",
+                    "The layered URP material reads this layer's assigned RGBA channel. With a SurfaceWeaver layered material assigned, the selected channel is previewed on the mesh while you paint.",
                     MessageType.Info);
             }
 
@@ -1917,12 +1954,44 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 renderer.sharedMaterials = materials;
             }
 
-            if (previewMaterialInstance != null && previewMaterialInstance.HasProperty(maskPreviewProperty))
+            if (previewMaterialInstance == null ||
+                !previewMaterialInstance.HasProperty(maskPreviewProperty))
+                return;
+
+            if (profile != null && previewMaterialInstance.shader != null &&
+                previewMaterialInstance.shader.name == SurfacePaintMaterialBinder.ShaderName)
             {
-                previewMaterialInstance.SetTexture(maskPreviewProperty, texture);
-                // The clone is HideAndDontSave. Do not mark the source material asset dirty.
-                SceneView.RepaintAll();
+                // Refresh profile-driven maps, RGBA channel addresses and overlay count
+                // on every paint update, while retaining the source material's tuning.
+                SurfacePaintMaterialBinder.CopyMaterialTuning(
+                    previewOriginalMaterial, previewMaterialInstance);
+                SurfacePaintMaterialBinder.ApplyProfileToMaterial(
+                    profile,
+                    previewMaterialInstance,
+                    texture,
+                    true,
+                    out _);
             }
+            else
+            {
+                // Compatibility path for older Shader Graph materials using _PaintMask.
+                previewMaterialInstance.SetTexture(maskPreviewProperty, texture);
+            }
+
+            // The clone is HideAndDontSave. Do not mark the source material asset dirty.
+            SceneView.RepaintAll();
+        }
+
+        /// <summary>Refreshes the temporary material when profile data changes in the Painter.</summary>
+        private void RefreshLivePreviewProfileBindings()
+        {
+            if (target == null || profile == null || previewMaterialInstance == null)
+                return;
+
+            Texture currentMask = gpuEngine != null && gpuEngine.IsInitialized
+                ? (Texture)gpuEngine.Current
+                : profile.GetMaskPage(0);
+            BindMaskPreview(currentMask);
         }
 
         /// <summary>

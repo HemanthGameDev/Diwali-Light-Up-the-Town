@@ -14,7 +14,7 @@ Material:
   m_ValidKeywords: []
   m_InvalidKeywords: []
   m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
+  m_EnableInstancingVariants: 1
   m_DoubleSidedGI: 0
   m_CustomRenderQueue: -1
   stringTagMap: {}
@@ -52,19 +52,19 @@ Material:
     - _LayerCount: 4
     - _MappingMode: 0
     m_Colors:
-    - _BaseTiling: {r: 2, g: 2, b: 0, a: 0}
+    - _BaseTiling: {r: 4, g: 3, b: 0, a: 0}
     - _BaseTint: {r: 1, g: 1, b: 1, a: 1}
-    - _Layer0Params: {r: 1, g: 0, b: 0, a: 1}
-    - _Layer0Tiling: {r: 5, g: 5, b: 0, a: 0}
+    - _Layer0Params: {r: 1.2, g: 0, b: 0, a: 1}
+    - _Layer0Tiling: {r: 4, g: 4, b: 0, a: 0}
     - _Layer0Tint: {r: 1, g: 1, b: 1, a: 0}
-    - _Layer1Params: {r: 2, g: 1, b: 0, a: 0.6}
+    - _Layer1Params: {r: 2.5, g: 1, b: 0, a: 0.6}
     - _Layer1Tiling: {r: 5, g: 5, b: 0, a: 0}
     - _Layer1Tint: {r: 1, g: 1, b: 1, a: 0}
-    - _Layer2Params: {r: 1.7, g: 2, b: 0, a: 0.6}
-    - _Layer2Tiling: {r: 50, g: 50, b: 0, a: 0}
+    - _Layer2Params: {r: 0.6, g: 0, b: 0, a: 1}
+    - _Layer2Tiling: {r: 3, g: 3, b: 0, a: 0}
     - _Layer2Tint: {r: 1, g: 1, b: 1, a: 0}
-    - _Layer3Params: {r: 1, g: 1, b: 0, a: 0}
-    - _Layer3Tiling: {r: 1, g: 1, b: 0, a: 0}
-    - _Layer3Tint: {r: 1, g: 1, b: 1, a: 0}
+    - _Layer3Params: {r: 0.38, g: 3, b: 0, a: 1}
+    - _Layer3Tiling: {r: 20, g: 20, b: 0, a: 0}
+    - _Layer3Tint: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

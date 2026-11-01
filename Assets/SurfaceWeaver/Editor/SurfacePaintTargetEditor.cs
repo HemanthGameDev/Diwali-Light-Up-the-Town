@@ -24,19 +24,25 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (GUILayout.Button("Create / Assign SurfaceWeaver URP Material"))
                 CreateOrAssignMaterial(paintTarget, binder);
 
-            if (binder != null && GUILayout.Button("Apply Profile to Renderer Now"))
+            if (binder != null)
             {
-                bool applied = binder.ApplyProfile(out string report);
-                if (paintTarget.TryGetRenderer(out MeshRenderer renderer) && renderer != null)
+                EditorGUILayout.HelpBox(
+                    "Update Profile Bindings refreshes textures, mask data, layer count and channel assignments while preserving the material's existing tint, tiling and opacity. Use the reset button only when you deliberately want to overwrite those settings with the profile values.",
+                    MessageType.Info);
+
+                if (GUILayout.Button("Update Profile Bindings (Preserve Material Tuning)"))
+                    ApplyProfileToTarget(paintTarget, binder, false);
+
+                if (GUILayout.Button("Apply Profile Tuning (Overwrite Material)"))
                 {
-                    Material[] slots = renderer.sharedMaterials;
-                    int index = Mathf.Clamp(binder.MaterialIndex, 0, Mathf.Max(0, slots.Length - 1));
-                    if (slots.Length > 0 && slots[index] != null)
-                        EditorUtility.SetDirty(slots[index]);
+                    if (EditorUtility.DisplayDialog(
+                            "Overwrite Material Tuning",
+                            "This will overwrite the current material's base/layer tint, tiling and opacity with the values stored in the SurfacePaintProfile. Continue?",
+                            "Apply Profile Tuning", "Cancel"))
+                    {
+                        ApplyProfileToTarget(paintTarget, binder, true);
+                    }
                 }
-                if (applied)
-                    AssetDatabase.SaveAssets();
-                EditorUtility.DisplayDialog("SurfaceWeaver", report, "OK");
             }
 
             if (paintTarget.TryGetMesh(out Mesh mesh))
@@ -69,6 +75,52 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.HelpBox(
                 "v0.7 supports one packed RGBA mask page and up to four overlay layers, plus the base surface. Use Mesh UV0 for curved props; World Planar XZ is intended for mostly horizontal environments. The generated material is dedicated to this profile/target; do not share it between targets with different profiles.",
                 MessageType.Info);
+        }
+
+        private static void ApplyProfileToTarget(
+            SurfacePaintTarget paintTarget,
+            SurfacePaintMaterialBinder binder,
+            bool resetMaterialTuning)
+        {
+            SurfaceWeaverWindow.SuspendPreviewForMaterialApply(paintTarget);
+            bool applied = false;
+            string report;
+
+            try
+            {
+                Undo.RecordObject(binder, "Apply SurfaceWeaver Profile");
+                if (paintTarget.TryGetRenderer(out MeshRenderer renderer) && renderer != null)
+                {
+                    Material[] slots = renderer.sharedMaterials;
+                    int index = binder.MaterialIndex;
+                    if (index >= 0 && index < slots.Length && slots[index] != null)
+                        Undo.RecordObject(slots[index], "Apply SurfaceWeaver Material Settings");
+                }
+
+                applied = resetMaterialTuning
+                    ? binder.ApplyProfileSettings(out report)
+                    : binder.ApplyProfile(out report);
+
+                if (paintTarget.TryGetRenderer(out renderer) && renderer != null)
+                {
+                    Material[] slots = renderer.sharedMaterials;
+                    int index = binder.MaterialIndex;
+                    if (index >= 0 && index < slots.Length && slots[index] != null)
+                        EditorUtility.SetDirty(slots[index]);
+                }
+
+                if (applied)
+                {
+                    EditorUtility.SetDirty(binder);
+                    AssetDatabase.SaveAssets();
+                }
+            }
+            finally
+            {
+                SurfaceWeaverWindow.ResumePreviewAfterMaterialApply(paintTarget);
+            }
+
+            EditorUtility.DisplayDialog("SurfaceWeaver", report, "OK");
         }
 
         private static void CreateOrAssignMaterial(SurfacePaintTarget paintTarget, SurfacePaintMaterialBinder binder)
@@ -106,44 +158,71 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (string.IsNullOrEmpty(path))
                 return;
 
-            Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (material == null && AssetDatabase.LoadMainAssetAtPath(path) != null)
+            SurfaceWeaverWindow.SuspendPreviewForMaterialApply(paintTarget);
+            bool previewSuspended = true;
+            try
             {
-                EditorUtility.DisplayDialog("SurfaceWeaver", "The selected path is occupied by a non-material asset. Choose another path.", "OK");
-                return;
-            }
+                // Re-read the renderer slots after the Painter restores its temporary preview material.
+                materials = renderer.sharedMaterials;
+                if (materials.Length == 0)
+                    materials = new Material[1];
+                materialIndex = Mathf.Clamp(materialIndex, 0, materials.Length - 1);
 
-            if (material == null)
-            {
-                material = new Material(shader);
-                AssetDatabase.CreateAsset(material, path);
-            }
-            else
-            {
-                Undo.RecordObject(material, "Update SurfaceWeaver Material");
-                material.shader = shader;
+                Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (material == null && AssetDatabase.LoadMainAssetAtPath(path) != null)
+                {
+                    EditorUtility.DisplayDialog("SurfaceWeaver", "The selected path is occupied by a non-material asset. Choose another path.", "OK");
+                    return;
+                }
+
+                bool reuseSurfaceWeaverMaterial = material != null &&
+                    material.shader != null && material.shader.name == SurfacePaintMaterialBinder.ShaderName;
+
+                if (material == null)
+                {
+                    material = new Material(shader);
+                    AssetDatabase.CreateAsset(material, path);
+                }
+                else
+                {
+                    Undo.RecordObject(material, "Update SurfaceWeaver Material");
+                    material.shader = shader;
+                    EditorUtility.SetDirty(material);
+                }
+
+                Undo.RecordObject(renderer, "Assign SurfaceWeaver Material");
+                materials[materialIndex] = material;
+                renderer.sharedMaterials = materials;
+                EditorUtility.SetDirty(renderer);
+
+                if (binder == null)
+                    binder = Undo.AddComponent<SurfacePaintMaterialBinder>(paintTarget.gameObject);
+                Undo.RecordObject(binder, "Configure SurfaceWeaver Material Binder");
+                binder.Configure(paintTarget, materialIndex);
+
+                string report;
+                bool applied;
+                if (reuseSurfaceWeaverMaterial)
+                    applied = binder.ApplyProfile(out report);
+                else
+                    applied = binder.ApplyProfileSettings(out report);
+
+                if (!applied)
+                {
+                    EditorUtility.DisplayDialog("SurfaceWeaver", report, "OK");
+                    return;
+                }
+
+                EditorUtility.SetDirty(binder);
                 EditorUtility.SetDirty(material);
-            }
-
-            Undo.RecordObject(renderer, "Assign SurfaceWeaver Material");
-            materials[materialIndex] = material;
-            renderer.sharedMaterials = materials;
-            EditorUtility.SetDirty(renderer);
-
-            if (binder == null)
-                binder = Undo.AddComponent<SurfacePaintMaterialBinder>(paintTarget.gameObject);
-            Undo.RecordObject(binder, "Configure SurfaceWeaver Material Binder");
-            binder.Configure(paintTarget, materialIndex);
-            if (!binder.ApplyProfile(out string report))
-            {
+                AssetDatabase.SaveAssets();
                 EditorUtility.DisplayDialog("SurfaceWeaver", report, "OK");
-                return;
             }
-
-            EditorUtility.SetDirty(binder);
-            EditorUtility.SetDirty(material);
-            AssetDatabase.SaveAssets();
-            EditorUtility.DisplayDialog("SurfaceWeaver", report, "OK");
+            finally
+            {
+                if (previewSuspended)
+                    SurfaceWeaverWindow.ResumePreviewAfterMaterialApply(paintTarget);
+            }
         }
     }
 }
