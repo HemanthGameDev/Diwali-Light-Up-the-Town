@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.0-preview.2
+- Added GPU mask-session Undo/Redo EditMode integration tests for stroke commit, multi-operation single-step history, Cancel, pending-stroke guards, redo branch invalidation and processed-pixel operations.
+- Added two-session history tests for per-target GPU sessions used by cross-target painting.
+- Added AssetDatabase round-trip tests for mask PNG creation/readback and importer settings, spline path assets and weighted scatter profiles.
+- Expanded the v0.9 test coverage matrix and manual integration plan.
+- GPU tests explicitly skip when the test host has no supported graphics device or required shader.
+- Unity compilation/test execution for this patch remains pending in the consuming project.
+
 ## v0.9.0-preview.1
 - Added Unity EditMode regression test assembly for Flood Fill, UV island chart building, Multi-Mesh target set data, and spline path profile data.
 - Added v0.9 test coverage matrix and manual integration plan.

@@ -28,15 +28,21 @@ This roadmap distinguishes source implementation from validated release status. 
 
 ## v0.9 — Quality and optimization
 
-### Preview.1 — Automated EditMode test foundation (prepared; Unity run pending)
+### Preview.1 — Automated EditMode test foundation (Unity run completed by user)
 - Added a dedicated Editor Test Framework assembly.
 - Added tests for Flood Fill channel/tolerance/connectivity/region behavior and invalid inputs.
 - Added tests for UV-island separation across a UV seam.
-- Added tests for Multi-Mesh target-set add/remove/clear semantics.
+- Added tests for Multi-Mesh target-set add/remove/clear semantics and basic asset persistence.
 - Added tests for spline path point width/pressure data and clamping.
-- Remaining work: run tests in Unity, add integration tests for Undo/Redo and AssetDatabase persistence, then expand compatibility and performance suites.
+- User-provided NUnit report: 24 SurfaceWeaver EditMode tests and one Addressables documentation test passed; no failures or skips.
 
-- Unity EditMode automated tests for geometry/UV diagnostics, channel preservation, Undo/Redo and asset persistence.
+### Preview.2 — Undo/Redo and asset persistence integration tests (prepared; Unity run pending)
+- Added GPU session Undo/Redo tests for completed strokes, multi-operation strokes, Cancel, pending-stroke guards, redo-branch invalidation and processed-pixel application.
+- Added per-target GPU session history coverage for the history primitives used by cross-target painting. The Multi-Mesh Painter window's actual Scene View group controller still requires manual integration testing.
+- Added mask PNG creation/readback, importer settings, profile reference persistence, spline path asset round-trip and scatter profile round-trip tests.
+- GPU-backed tests explicitly skip on a headless test host or when the required shader/ARGB32 RenderTexture support is unavailable.
+
+- Remaining v0.9 work: run the expanded suite in Unity, complete manual Undo/Redo workflows, then expand compatibility and performance suites.
 - Graphics API compatibility: Direct3D 11/12, Vulkan and Metal where available; Android OpenGLES3 testing.
 - Unity/URP compatibility matrix and clean-import validation.
 - Large-mesh and long-stroke profiling.
