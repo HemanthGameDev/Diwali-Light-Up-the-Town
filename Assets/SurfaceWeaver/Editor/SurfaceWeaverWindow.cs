@@ -26,6 +26,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private float floodFillTolerance = 0.02f;
         private float floodFillTargetValue = 1f;
         private bool floodFillEightConnected;
+        private bool floodFillRestrictToUvIsland = true;
         private bool showMipMapBleedingPreventionSection = true;
         private Vector2 scroll;
 
@@ -779,8 +780,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 floodFillTolerance = EditorGUILayout.Slider("Value Tolerance", floodFillTolerance, 0f, 0.25f);
                 floodFillTargetValue = EditorGUILayout.Slider("Fill Value", floodFillTargetValue, 0f, 1f);
                 floodFillEightConnected = EditorGUILayout.Toggle("8-Neighbour Connectivity", floodFillEightConnected);
+                floodFillRestrictToUvIsland = EditorGUILayout.Toggle("Restrict to Seed UV Island", floodFillRestrictToUvIsland);
                 long floodPixels = (long)gpuEngine.Width * gpuEngine.Height;
-                EditorGUILayout.LabelField("Approx. temporary CPU staging", FormatBytes(floodPixels * 13L));
+                EditorGUILayout.LabelField("Approx. temporary CPU staging", FormatBytes(floodPixels * (floodFillRestrictToUvIsland ? 14L : 13L)));
+                if (floodFillRestrictToUvIsland)
+                    EditorGUILayout.HelpBox("The fill is limited to the UV0 chart containing the clicked triangle. Adjacent UV charts separated by a seam are excluded. Overlapping/stacked UV charts remain ambiguous.", MessageType.Info);
                 if (gpuEngine.Width >= 4096 || gpuEngine.Height >= 4096)
                 {
                     EditorGUILayout.HelpBox(
@@ -810,7 +814,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.HelpBox(
                 "Hold the left mouse button over the target in Scene View to paint. Hold Alt for normal Scene View navigation. " +
                 "Paint writes white, Erase writes black, and Smooth averages the selected channel locally. " +
-                "Fill/Clear affect the entire selected channel. Connected-Region Flood Fill uses UV-space pixel connectivity on the active channel and preserves other RGBA channels. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y (or Shift+Z) redoes. Save Mask PNG to persist changes.",
+                "Fill/Clear affect the entire selected channel. Connected-Region Flood Fill uses UV-space pixel connectivity on the active channel, can be restricted to the clicked UV0 chart, and preserves other RGBA channels. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y (or Shift+Z) redoes. Save Mask PNG to persist changes.",
                 MessageType.Info);
             EditorGUILayout.LabelField("Painting Status", paintStatus);
 
@@ -2675,10 +2679,36 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 Color32[] pixels = readback.GetPixels32();
                 int x = Mathf.Clamp(Mathf.FloorToInt(hit.Uv0.x * gpuEngine.Width), 0, gpuEngine.Width - 1);
                 int y = Mathf.Clamp(Mathf.FloorToInt(hit.Uv0.y * gpuEngine.Height), 0, gpuEngine.Height - 1);
+                byte[] allowedRegion = null;
+                if (floodFillRestrictToUvIsland)
+                {
+                    if (hit.Target == null || hit.Collider == null || !hit.Target.TryGetMesh(out Mesh targetMesh))
+                    {
+                        paintStatus = "UV-island restriction requires a valid readable target mesh and MeshCollider.";
+                        Repaint();
+                        return;
+                    }
+
+                    if (hit.Collider.sharedMesh != targetMesh)
+                    {
+                        paintStatus = "The MeshCollider must use the same mesh as the active SurfacePaintTarget to resolve the clicked UV island safely.";
+                        Repaint();
+                        return;
+                    }
+
+                    if (!SurfaceUvIslandRegionBuilder.TryBuild(targetMesh, hit.TriangleIndex,
+                        gpuEngine.Width, gpuEngine.Height, hit.Uv0, out allowedRegion, out error))
+                    {
+                        paintStatus = error;
+                        Repaint();
+                        return;
+                    }
+                }
+
                 bool success = SurfaceMaskFloodFillProcessor.TryFill(
                     pixels, gpuEngine.Width, gpuEngine.Height, x, y,
                     (int)layer.MaskChannel, floodFillTolerance, floodFillTargetValue,
-                    floodFillEightConnected, out int changedPixels, out error);
+                    floodFillEightConnected, out int changedPixels, out error, allowedRegion);
 
                 if (!success)
                 {
@@ -2703,7 +2733,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
                 hasUnsavedChanges = true;
                 BindWorkingMaskPreview();
-                paintStatus = "Flood-filled " + changedPixels.ToString("N0") + " connected pixel(s) in " + layer.MaskChannel + ". Other RGBA channels were preserved. Undo is available.";
+                paintStatus = "Flood-filled " + changedPixels.ToString("N0") + " connected pixel(s) in " + layer.MaskChannel +
+                    (floodFillRestrictToUvIsland ? " within the clicked UV island." : " across UV texture space.") +
+                    " Other RGBA channels were preserved. Undo is available.";
             }
             catch (Exception exception)
             {

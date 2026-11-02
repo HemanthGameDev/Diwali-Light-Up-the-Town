@@ -106,3 +106,19 @@ Source-level checks only. Unity Editor compilation, Scene View input, serializat
 - Added UV texture-space connected-region mask Flood Fill with tolerance and 4-/8-neighbour connectivity.
 - Preserves non-selected RGBA channels and creates one Undo step.
 - Explicitly documents UV-island adjacency limitations and CPU readback memory costs.
+
+
+## v0.8.0-preview.8
+- Added optional-by-toggle UV0 seed-island restriction for Connected-Region Flood Fill (enabled by default).
+- Fill traversal is limited to texels rasterized from the mesh chart containing the picked triangle.
+- Preserved preview.7 unrestricted texture-space mode, RGBA isolation, tolerance, 4/8 connectivity, Undo/Redo and PNG persistence.
+- Added clear validation for unreadable meshes and mismatched MeshCollider shared meshes.
+- Added manual test coverage for split seams, thin islands, channel preservation and regression checks.
+
+
+## v0.8.0-consolidation.1 — Advanced Authoring Consolidation
+
+- Consolidates the v0.8 spline authoring, live width/pressure preview, batch mask export, Multi-Mesh Workspace, separate Multi-Mesh Painter, weighted object/vegetation scatter with existing-instance updates, and connected-region UV-island-aware Flood Fill work.
+- Updates the README, roadmap and remaining-work backlog to reflect the v0.8 feature scope and known boundaries.
+- Adds a complete v0.8 regression test plan.
+- This is a consolidation candidate, not a claim of Unity compilation or release certification; run the consuming-project validation plan before tagging v0.8.0.

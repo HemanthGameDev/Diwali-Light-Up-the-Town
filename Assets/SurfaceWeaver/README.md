@@ -1,6 +1,20 @@
-# SurfaceWeaver v0.8.0-preview.2-hotfix.3
+# SurfaceWeaver v0.8.0-consolidation.1
 
 SurfaceWeaver is an Editor-focused custom-mesh surface painting tool for Unity 6 URP. The v0.6.6 authoring foundation supports UV0 mask painting, RGBA channels, brushes, Undo/Redo, UV diagnostics, and spline/path authoring. v0.7 adds the profile-driven URP layered rendering workflow that consumes the painted mask pages. v0.7.7–v0.7.8 add connected UV island grouping and stacked/mirrored/contained/partial overlap diagnostics. v0.7.9 adds island-aware UV gutter padding and v0.7.10 adds selected-channel UV-constrained mask dilation. v0.7.11 adds mip-map bleeding prevention for packed masks. v0.8.0-preview.1 adds draggable path anchors and editable Bézier tangent handles. v0.8.0-preview.2-hotfix.3 restores the single-active-target spline workflow and adds an Inspector anchor selector. Multi-mesh path authoring is deferred.
+
+
+## v0.8 advanced authoring features
+
+The consolidated v0.8 source includes the following authoring workflows in addition to the v0.7 painting/rendering foundation:
+
+- **Spline authoring:** draggable anchors, editable incoming/outgoing Bézier handles, closed paths, per-anchor width and pressure profiles, and non-destructive live preview with Commit/Cancel. Spline point creation/editing remains tied to one active `SurfacePaintTarget`; the abandoned multi-surface spline registration UI is not included.
+- **Batch mask export:** exports persisted lossless mask-page files for multiple targets, optionally with per-target folders and a CSV manifest. Unsaved GPU buffers and uncommitted live previews must be saved/committed first.
+- **Multi-Mesh Workspace:** stores scene targets as `GlobalObjectId` entries, validates them and opens them in the relevant authoring tools.
+- **Multi-Mesh Painter:** a separate tool for supported cross-target paint/erase/smooth strokes with target-specific sessions and grouped stroke Undo/Redo. Follow its per-target requirements and do not share a mask texture asset between sessions.
+- **Object & Vegetation Scatter:** Editor-only prefab scattering with weighted selection, surface projection/alignment, spacing/slope/exclusion controls, preview ghosts, and optional live updates for metadata-backed instances. Weight affects future selection; it does not replace existing prefab identities.
+- **Connected-Region Flood Fill:** UV0 texture-space fill with tolerance, 4-/8-neighbour connectivity, selected-channel isolation and Undo/Redo. The optional seed-UV-island restriction constrains filling to the chart containing the picked triangle.
+
+For version-specific workflows and limitations, see the `Build_Notes_v0.8.0-preview.*.md` and matching manual test plans in `Documentation`.
 
 ## v0.7 rendering at a glance
 
@@ -35,6 +49,7 @@ This is an initial rendering implementation, not a claim of completed mobile opt
 8. Hold the left mouse button over the target in Scene View to paint, erase, or smooth. Alt remains available for Scene View navigation.
 9. Save the mask page as a PNG asset. Undo/Redo history is session-only.
 10. Use **Validate UV Channel** before painting to inspect UV range, degenerate triangles, triangle overlaps, geometric seams, UV island groups, and stacked/mirrored/contained/partial overlaps.
+11. For Connected-Region Flood Fill, arm the tool and click a point on the active target. **Restrict to Seed UV Island** limits fill traversal to the UV0 chart containing the clicked triangle; disable it only when you intentionally want the older unrestricted texture-space behavior. Read `Documentation/Build_Notes_v0.8.0-preview.8.md` before using the island-restricted mode on unusual imported meshes.
 11. Load the relevant mask page and use **UV Gutter Padding > Apply UV Gutter Padding to Active Mask** to copy RGBA edge texels into unused UV atlas space. The operation is Undoable; save the page to persist it. It refuses separate-island overlaps or padding-front collisions.
 12. Use **UV-Constrained Mask Dilation > Apply Mask Dilation to Selected Channel** to expand existing values in the selected layer's channel inside UV island coverage. It does not change other channels or write into empty atlas space. The operation is Undoable; save the page to persist it.
 13. For paths, select one `SurfacePaintTarget`, enable **Path Authoring**, and click that target mesh to add anchors. Select an anchor by clicking its Scene View sphere or using the **Edit Anchor** dropdown. Drag any anchor to move it on the active target; its incoming/outgoing Bézier handles are editable when selected. Save Path Asset to persist the path. Spline authoring in this preview is intentionally single-target; clicking other meshes does not register them or move the path to them.

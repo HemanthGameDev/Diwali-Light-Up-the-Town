@@ -1,44 +1,51 @@
 # SurfaceWeaver Development Roadmap
 
-This roadmap reflects the product plan confirmed by the developer. A source implementation is not considered complete until it has passed the consuming Unity project's manual acceptance tests.
+This roadmap distinguishes source implementation from validated release status. A feature is not production-ready until it passes its consuming Unity project's acceptance tests.
 
-## v0.7 — UV quality and rendering
+## v0.7 — UV quality and rendering foundation
 - UV island grouping and mirrored/stacked UV diagnostics.
-- Automatic UV gutter padding and mask dilation.
-- Mip-map bleeding prevention.
-- Profile-driven multi-layer URP shader and automatic RGBA mask-to-layer binding.
-- Per-layer textures, tint, tiling and opacity.
-- Mobile shader options; real-device profiling baseline established. Full graphics API and device matrix remains for v0.9.
+- Automatic UV gutter padding, UV-constrained mask dilation and mip-map bleeding mitigation.
+- Profile-driven multi-layer URP shader and RGBA mask-to-layer binding.
+- Per-layer albedo, tint, tiling and opacity.
+- Mobile shader options and an initial OnePlus CPH2467/Vulkan profiling baseline. Full device/API matrix remains for v0.9.
 
-## v0.8 — Advanced authoring
-- Editable spline anchors and Bézier tangent handles (preview.1; developer-confirmed working).
-- Reliable single-target anchor selection and editing (hotfix.3; developer-confirmed working).
-- Closed paths (existing behavior retained and regression-tested during spline work).
-- Variable path width and pressure profiles (preview.3; developer-confirmed working).
-- Non-destructive live spline preview with Commit/Cancel and one-step Undo (preview.3.1; developer-confirmed working).
-- Batch mask export from multiple selected targets (preview.4; developer-confirmed working).
-- Multi-Mesh Workspace and reusable target sets (preview.5; developer-confirmed working).
-- Continuous cross-target mask painting (preview.5.1; developer acceptance status not yet reconfirmed in this branch).
-- Object and vegetation scatter placement with Enabled prefab toggles and non-destructive live placement ghosts (preview.6.1; implementation prepared; consuming Unity project validation pending).
-- Connected-region UV mask Flood Fill (preview.7; texture-space implementation; mesh-topology-aware island constraints remain a follow-up) and additional surface tools.
+## v0.8 — Advanced authoring (feature-complete candidate)
+- Editable spline anchors and Bézier tangent handles; single-active-target spline editing.
+- Closed spline paths, per-anchor width and pressure profiles, and non-destructive live preview with Commit/Cancel.
+- Batch export of persisted mask pages for multiple selected targets.
+- Reusable Multi-Mesh Workspace target sets using scene GlobalObjectIds.
+- Separate Multi-Mesh Painter for supported cross-target paint/erase/smooth operations with grouped stroke Undo/Redo.
+- Editor-only object and vegetation scatter with weighted prefab selection, deterministic instance metadata, preview ghosts, and optional live update of compatible existing instances.
+- Connected-region UV mask Flood Fill with tolerance, 4-/8-neighbour connectivity, channel isolation, Undo/Redo and UV0 seed-chart restriction.
+- v0.8 consolidation is now a regression and compatibility pass; no further feature expansion should be accepted until the full matrix passes.
+
+### v0.8 known boundaries
+- Spline authoring remains single-active-target; cross-target spline paths are not implemented.
+- Batch export reads persisted mask-page files, not unsaved GPU paint or uncommitted spline previews.
+- Multi-Mesh Painter has explicit per-target collider, UV0, mask-page and material requirements; it does not perform cross-mesh spline authoring or geometry-aware interpolation through gaps.
+- Scatter live updates require instance metadata. Adopting earlier instances is approximate for unusual prefab transforms. Weight only affects future prefab selection; density, spacing and brush radius affect future stamps.
+- Flood Fill is UV0 chart-constrained texture-space connectivity, not geodesic mesh-surface flood fill. Stacked/overlapping UV charts sharing texels remain ambiguous; large masks require memory testing.
 
 ## v0.9 — Quality and optimization
-- Automated tests.
-- Graphics API compatibility.
-- Large-mesh profiling.
-- Memory optimization.
-- Comprehensive edge-case testing.
-- Extended device profiling and performance-regression baselines.
+- Unity EditMode automated tests for geometry/UV diagnostics, channel preservation, Undo/Redo and asset persistence.
+- Graphics API compatibility: Direct3D 11/12, Vulkan and Metal where available; Android OpenGLES3 testing.
+- Unity/URP compatibility matrix and clean-import validation.
+- Large-mesh and long-stroke profiling.
+- Memory budgeting, allocation reduction and asynchronous GPU readback where supported.
+- Comprehensive edge-case testing: submeshes, non-readable meshes, missing/mismatched colliders, non-uniform/negative transforms, UV boundaries, thin charts and overlapping UVs.
+- Repeated mobile performance captures and thermal testing on reference and lower-tier devices.
 
-## v1.0 — Release candidate
-- Professional Editor UI.
-- Free Lite and paid Pro editions.
-- Demo project and sample assets.
-- Documentation and tutorials.
-- Asset Store validation and release preparation.
+## v1.0 — Asset Store release candidate
+- Professional Editor UI, contextual help, first-run setup and actionable diagnostics.
+- Free Lite / paid Pro feature split.
+- Demo project, sample meshes/materials/textures and brush/scatter presets.
+- Complete user documentation and tutorials.
+- Third-party/license audit and required generated-content disclosures.
+- Asset Store package structure, screenshots, trailer, changelog, support policy and validator pass.
 
-## Future enhancement backlog
-- Per-layer normal maps.
-- Reusable surface recipes.
-- Advanced save/recovery workflows.
-- Additional robustness for non-uniform/negative transforms, submeshes, UV boundaries and high-curvature geometry.
+## Future backlog
+- True geodesic world-surface Flood Fill.
+- Independent editing for overlapping/stacked UV charts (requires a different mask representation or UV separation).
+- Per-layer normal maps, metallic/smoothness and advanced blend modes.
+- Reusable surface recipes and project-level preset management.
+- Stronger autosave/recovery, undo compression and history budgeting.

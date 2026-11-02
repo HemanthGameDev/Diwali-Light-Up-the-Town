@@ -1,63 +1,37 @@
-# SurfaceWeaver — Remaining Work After v0.6.0
+# SurfaceWeaver — Remaining Work After v0.8.0 Feature Development
 
-This backlog separates source features from validated release status. A feature is not considered production-ready until it is tested in the target Unity Editor and supported graphics APIs.
+This backlog records product work that remains after the v0.8 advanced-authoring feature set. Implemented source is not equivalent to release validation.
 
-## Completed in source by v0.6.0
-- Custom static MeshFilter/MeshRenderer targets with non-convex MeshCollider picking.
-- Scene View brush preview and UV0 hit diagnostics.
-- GPU packed RGBA mask painting, erase, smooth, fill, clear and PNG persistence.
-- Session Undo/Redo using GPU snapshots.
-- Starter/custom brush alpha presets, rotation, jitter and spacing.
-- UV0 range, degenerate, overlap-pair and geometric seam diagnostics.
-- Seam-aware world-space projection by rasterizing every source triangle in UV0 space with source local positions and per-triangle face normals.
-- Catmull-Rom path preview, anchor authoring, MeshCollider sample projection and one-stroke application.
-- Reusable path assets with local-space points, brush configuration, seed and GlobalObjectId string target resolution.
-
-## v0.6 validation still required
-- Unity compilation and shader compilation in the supported Unity 6/URP project.
-- Seam painting on a mesh with a real split UV seam (e.g. a cylinder or sphere), including both sides of the seam.
-- Correct render-texture orientation and UV-to-pixel placement across the supported graphics APIs.
-- Normal filtering on adjacent, sharply angled and back-facing surfaces.
-- Non-uniform scale/rotation brush footprint tests.
-- RGBA channel isolation with a multi-channel mask page.
-- Spline preview, application, Undo, deterministic brush jitter, save/load of path assets, and path target resolution after scene reload.
-- Large-mesh and long-spline performance profiling.
-
-## v0.7 — UV output quality and rendering
-- Island-aware UV gutter dilation/padding, bleed prevention and mip validation.
-- Better UV island grouping and mirrored/stacked chart detection.
-- Adjustable normal cutoff and more robust high-curvature handling.
-- Profile-driven multi-layer URP shader/material generator and binder.
-- Automatic RGBA page/channel binding, per-layer albedo/tint/tiling/opacity and optional surface properties.
-- Mobile texture-sample budget controls and runtime profile/mask consumption.
-
-## v0.8 — Advanced authoring
-- Editable Scene View path anchors and incoming/outgoing Bézier tangent handles (preview.1; developer-reported working).
-- Multi-mesh path authoring and surface-aware anchor binding are deferred. Current preview intentionally uses one active SurfacePaintTarget for point creation, movement, and application.
-- Closed paths already exist in v0.7.12 and must be regression-tested alongside editable handles.
-- Variable path width and pressure/opacity curves remain pending.
-- Multi-target mask painting, multi-mesh authoring and batch mask export remain pending. Current spline authoring intentionally stays on the active target.
-- Object/vegetation scatter placement.
-- Region/flood-fill respecting mesh connectivity and UV islands.
-- Reusable surface recipes and advanced save/recovery.
+## v0.8 consolidation requirements
+- Complete the consolidated manual regression plan.
+- Compile in the supported Unity 6 URP project from a clean import.
+- Test existing projects/assets created before v0.8.
+- Verify all EditorWindow menu entries and their lifecycle after domain reload.
+- Validate spline anchor/handle editing, closed paths, width/pressure interpolation, live preview Commit/Cancel and grouped Undo behavior.
+- Validate batch export naming, collision handling, manifest contents and persisted-file-only behavior.
+- Validate target-set GlobalObjectId resolution after save/reopen/scene reload.
+- Validate Multi-Mesh Painter across different targets, target switching, grouped Undo/Redo, Escape cancel and Save All Masks.
+- Validate weighted scatter selection, preview cleanup, deterministic metadata, existing-instance adoption/live updates, prefab links and Undo.
+- Validate Flood Fill chart restriction on split-seam meshes, 4-/8-neighbour behavior, selected-channel preservation, pixel orientation, Undo/Redo and save/reload.
+- Run the existing SurfaceWeaver mobile benchmark scene and compare against the saved OnePlus CPH2467 baseline.
 
 ## v0.9 — Quality and compatibility
-- Automated Unity Editor tests.
-- Direct3D 11/12, Vulkan and Metal testing where available.
-- Supported Unity/URP compatibility matrix.
-- GPU/memory profiling and large-mesh optimization.
-- Negative-scale, high-curvature, non-readable, boundary and overlapping-UV edge cases.
+- Automated Unity EditMode tests.
+- Graphics API and Unity/URP compatibility matrix.
+- Large-mesh and long-path profiling.
+- Memory optimization and readback-budget validation.
+- Comprehensive edge cases: non-readable meshes, submeshes, invalid colliders, non-uniform/negative transforms, UVs outside 0–1, thin charts and stacked UVs.
+- Android Vulkan/OpenGLES3 and additional device testing.
 
 ## v1.0 — Asset Store release
-- Product polish, Lite/Pro split, samples, documentation, tutorials, release package, validator, screenshots, trailer, support policy, license audit and AI-content disclosure.
+- Professional Editor UI, first-run setup and contextual diagnostics.
+- Lite/Pro split and feature entitlement validation.
+- Demo project, sample assets and presets.
+- Documentation, tutorials and support policy.
+- License/third-party audit, package validator and release marketing assets.
 
-## Known v0.6 limitations
-- UV0 only; UV coordinates must be in 0–1.
-- Overlapping/stacked charts remain ambiguous.
-- Smooth is still UV-neighbourhood based, not island-aware.
-- No automatic gutter dilation/mip-bleed correction.
-- One target at a time.
-- Spline width is constant; editable anchor/tangent handles and an Inspector anchor selector are included in the current preview. Closed paths are already supported by the existing Close Path toggle. Cross-target path authoring and mask painting remain unimplemented until a complete multi-mesh workflow is designed.
-- Applying a path modifies the active mask page. The path asset stores the recipe, not a separate non-destructive layer.
-- Full profile-driven URP multi-layer rendering is not implemented yet.
-- Full UV raster geometry is drawn for each stamp; large meshes may be slow.
+## Explicitly out of scope for v0.8
+- Cross-target spline authoring.
+- Geodesic world-surface Flood Fill.
+- Independent paint data on overlapping/stacked UVs sharing the same texels.
+- Per-layer normal/metallic/height blend maps.

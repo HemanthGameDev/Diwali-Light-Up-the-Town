@@ -14,7 +14,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         public static bool TryFill(
             Color32[] pixels, int width, int height, int seedX, int seedY,
             int channel, float tolerance, float replacement, bool eightConnected,
-            out int changedPixels, out string error)
+            out int changedPixels, out string error, byte[] allowedRegion = null)
         {
             changedPixels = 0;
             error = string.Empty;
@@ -35,6 +35,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
 
             int count = pixels.Length;
+            if (allowedRegion != null && allowedRegion.Length != count)
+            {
+                error = "Flood Fill received a UV-island mask with dimensions that do not match the active mask page.";
+                return false;
+            }
             // Prevent accidental allocation overflow in malformed or extreme assets.
             if (count > 16777216)
             {
@@ -48,6 +53,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 sourceChannel[i] = GetChannel(pixels[i], channel);
 
             int seedIndex = seedY * width + seedX;
+            if (allowedRegion != null && allowedRegion[seedIndex] == 0)
+            {
+                error = "The clicked seed texel is outside the rasterized UV island. Try a higher-resolution mask or disable UV-island restriction for this fill.";
+                return false;
+            }
             byte seedValue = sourceChannel[seedIndex];
             byte fillValue = (byte)Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp01(replacement) * 255f), 0, 255);
             int toleranceByte = Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp01(tolerance) * 255f), 0, 255);
@@ -68,16 +78,16 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
                 int x = index % width;
                 int y = index / width;
-                EnqueueNeighbor(x - 1, y, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
-                EnqueueNeighbor(x + 1, y, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
-                EnqueueNeighbor(x, y - 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
-                EnqueueNeighbor(x, y + 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
+                EnqueueNeighbor(x - 1, y, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
+                EnqueueNeighbor(x + 1, y, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
+                EnqueueNeighbor(x, y - 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
+                EnqueueNeighbor(x, y + 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
                 if (eightConnected)
                 {
-                    EnqueueNeighbor(x - 1, y - 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
-                    EnqueueNeighbor(x + 1, y - 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
-                    EnqueueNeighbor(x - 1, y + 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
-                    EnqueueNeighbor(x + 1, y + 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue);
+                    EnqueueNeighbor(x - 1, y - 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
+                    EnqueueNeighbor(x + 1, y - 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
+                    EnqueueNeighbor(x - 1, y + 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
+                    EnqueueNeighbor(x + 1, y + 1, width, height, seedValue, toleranceByte, sourceChannel, visited, queue, allowedRegion);
                 }
             }
 
@@ -86,11 +96,12 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private static void EnqueueNeighbor(
             int x, int y, int width, int height, byte seedValue, int tolerance,
-            byte[] source, byte[] visited, Queue<int> queue)
+            byte[] source, byte[] visited, Queue<int> queue, byte[] allowedRegion)
         {
             if (x < 0 || x >= width || y < 0 || y >= height) return;
             int index = y * width + x;
             if (IsVisited(visited, index)) return;
+            if (allowedRegion != null && allowedRegion[index] == 0) return;
             SetVisited(visited, index);
             if (Math.Abs(source[index] - seedValue) <= tolerance) queue.Enqueue(index);
         }

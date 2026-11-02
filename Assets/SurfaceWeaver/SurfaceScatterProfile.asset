@@ -14,12 +14,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Editor::HemanthGameDev.SurfaceWeaver.Editor.SurfaceScatterProfile
   prefabs:
   - prefab: {fileID: 3240421222700719615, guid: e9b0212ed69cad14bbce290ad905e0b9, type: 3}
-    weight: 1
+    entryId: 8a05c49d3160436682913cc36b6c1211
+    weight: 30
     minimumScale: 1
     maximumScale: 1
     rotationOffset: {x: 0, y: 0, z: 0}
   - prefab: {fileID: 7539975119317226518, guid: b2348c511f5b86b4cb0d97d2cba96c93, type: 3}
-    weight: 1
+    entryId: aa2fe3d1ae44427b9e467818d86a3220
+    weight: 70
     minimumScale: 1
     maximumScale: 1
     rotationOffset: {x: 0, y: 0, z: 0}
@@ -35,9 +37,10 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 16
   exclusionRadius: 0.4
+  globalScaleMultiplier: {x: 1, y: 1, z: 1}
   randomYaw: 1
-  yawRange: 360
+  yawRange: 243
   randomPitchAndRoll: 0
-  pitchRange: 10
-  rollRange: 10
+  pitchRange: 12.1
+  rollRange: 0
   randomSeed: 12345
