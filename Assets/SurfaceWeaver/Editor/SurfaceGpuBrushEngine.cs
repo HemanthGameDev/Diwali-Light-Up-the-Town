@@ -562,6 +562,76 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             return SetChannelValue(channelIndex, 0f, out error);
         }
 
+        /// <summary>
+        /// Replaces the current packed mask page with CPU-processed pixels as a single Undo step.
+        /// The operation is reversible in the active session; the user saves the PNG to persist it.
+        /// </summary>
+        public bool ApplyPixelChanges(Color32[] pixels, out string error)
+        {
+            error = string.Empty;
+            if (!IsInitialized || readTexture == null || writeTexture == null)
+            {
+                error = "The mask painting session is not initialized.";
+                return false;
+            }
+            if (pendingStrokeSnapshot != null)
+            {
+                error = "Finish the active paint stroke before applying a mask processing operation.";
+                return false;
+            }
+            if (pixels == null || pixels.Length != Width * Height)
+            {
+                error = "The processed pixel buffer does not match the active mask dimensions.";
+                return false;
+            }
+
+            RenderTexture undoSnapshot = CreateSnapshot(readTexture, "SurfaceWeaver Mask Processing Undo");
+            if (undoSnapshot == null)
+            {
+                error = "Could not allocate an Undo snapshot for mask processing.";
+                return false;
+            }
+
+            Texture2D upload = null;
+            try
+            {
+                upload = new Texture2D(Width, Height, TextureFormat.RGBA32, false, true)
+                {
+                    name = "SurfaceWeaver Processed Mask Upload",
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+                upload.SetPixels32(pixels);
+                upload.Apply(false, false);
+                Blit(upload, writeTexture);
+
+                RenderTexture swap = readTexture;
+                readTexture = writeTexture;
+                writeTexture = swap;
+
+                ClearHistory(redoHistory);
+                undoHistory.Add(undoSnapshot);
+                undoSnapshot = null;
+                TrimHistoryToBudget();
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "Could not apply processed mask pixels: " + exception.Message;
+                return false;
+            }
+            finally
+            {
+                ReleaseRenderTexture(ref undoSnapshot);
+                if (upload != null)
+                {
+                    if (Application.isPlaying)
+                        UnityEngine.Object.Destroy(upload);
+                    else
+                        UnityEngine.Object.DestroyImmediate(upload);
+                }
+            }
+        }
+
         public Texture2D CreateReadbackTexture(out string error)
         {
             error = string.Empty;

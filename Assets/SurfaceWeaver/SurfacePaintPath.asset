@@ -1,0 +1,53 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6e6c3a945f3844a6a82010ac55c60f3f, type: 3}
+  m_Name: SurfacePaintPath
+  m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Runtime::HemanthGameDev.SurfaceWeaver.Runtime.SurfacePaintPathAsset
+  targetGlobalObjectId: GlobalObjectId_V1-2-bc506b19fc1d7d8418f05a2f2434dca6-809288809-0
+  targetDisplayName: Plane
+  points:
+  - localPosition: {x: 14.1774645, y: 0.12606351, z: -3.9471955}
+    localNormal: {x: 0.018946147, y: 0.99953693, z: 0.023811895}
+    localInTangent: {x: 0, y: 0, z: 0}
+    localOutTangent: {x: 0, y: 0, z: 0}
+    hasCustomTangents: 0
+  - localPosition: {x: 11.182816, y: 0.5633633, z: -9.30884}
+    localNormal: {x: -0.015427011, y: 0.99823266, z: 0.057389487}
+    localInTangent: {x: 0, y: 0, z: 0}
+    localOutTangent: {x: 0, y: 0, z: 0}
+    hasCustomTangents: 0
+  - localPosition: {x: 8.230184, y: 0.32562667, z: -8.890218}
+    localNormal: {x: -0.12238008, y: 0.9908973, z: -0.056086373}
+    localInTangent: {x: 0, y: 0, z: 0}
+    localOutTangent: {x: 0, y: 0, z: 0}
+    hasCustomTangents: 0
+  - localPosition: {x: 9.83282, y: 0.28024545, z: -3.6015148}
+    localNormal: {x: 0.013633624, y: 0.99979794, z: -0.014774504}
+    localInTangent: {x: 0, y: 0, z: 0}
+    localOutTangent: {x: 0, y: 0, z: 0}
+    hasCustomTangents: 0
+  layerId: 71b916c3592346258a0ce4811c56d4e0
+  maskPageIndex: 0
+  maskChannel: 0
+  brushRadius: 2
+  opacity: 0.25
+  hardness: 0.15
+  spacing: 0.2
+  erase: 0
+  brushPreset: {fileID: 11400000, guid: 400c55b09155eea41be6d586b6552558, type: 2}
+  brushAlphaOverride: {fileID: 0}
+  brushRotationDegrees: 0
+  scaleJitter: 0
+  smooth: 0
+  closedLoop: 0
+  randomizePerStamp: 0
+  randomSeed: 2057856146

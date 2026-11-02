@@ -15,6 +15,14 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private SurfacePaintTarget target;
         private SurfacePaintProfile profile;
         private MeshUvValidationReport lastReport;
+        private bool showUvIslandDetails = true;
+        private bool showUvIslandOverlapDetails = true;
+        private bool showSameIslandOverlapDetails = true;
+        private bool showUvGutterPaddingSection = true;
+        private int uvGutterPaddingPixels = 8;
+        private bool showMaskDilationSection = true;
+        private int maskDilationRadiusPixels = 4;
+        private bool showMipMapBleedingPreventionSection = true;
         private Vector2 scroll;
 
         private bool scenePreviewEnabled = true;
@@ -75,6 +83,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private bool seamAwareProjection = true;
         private SurfacePaintPathAsset pathAsset;
         private readonly List<SurfacePaintPathPoint> pathPoints = new List<SurfacePaintPathPoint>();
+        private int selectedPathPointIndex = -1;
         private string pathStatus = "Click the target mesh in Scene View to add spline anchors.";
         private int pathRandomSeed = 1;
 
@@ -175,6 +184,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             DisposePaintSession();
             DisposeUvRasterMesh();
             pathPoints.Clear();
+            selectedPathPointIndex = -1;
             pathAsset = null;
             pathAuthoringEnabled = false;
             target = value;
@@ -202,6 +212,12 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             DrawSplinePathSection();
             EditorGUILayout.Space(8f);
             DrawDiagnosticsSection();
+            EditorGUILayout.Space(8f);
+            DrawUvGutterPaddingSection();
+            EditorGUILayout.Space(8f);
+            DrawMaskDilationSection();
+            EditorGUILayout.Space(8f);
+            DrawMipMapBleedingPreventionSection();
             EditorGUILayout.Space(8f);
             DrawRoadmapSection();
             EditorGUILayout.EndScrollView();
@@ -704,13 +720,54 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 StopStroke();
                 pathAuthoringEnabled = newPathMode;
                 hasPreviousPaintHit = false;
+                selectedPathPointIndex = -1;
                 SceneView.RepaintAll();
             }
 
             EditorGUILayout.LabelField("Path Anchors", pathPoints.Count.ToString());
+            EditorGUILayout.LabelField(
+                "Selected Anchor",
+                selectedPathPointIndex >= 0 && selectedPathPointIndex < pathPoints.Count
+                    ? "P" + (selectedPathPointIndex + 1)
+                    : "None (click an anchor in Scene View)");
             closeSplinePath = EditorGUILayout.ToggleLeft("Close Path (connect last anchor to first)", closeSplinePath);
             randomizeSplineStamps = EditorGUILayout.ToggleLeft(
                 "Randomize brush rotation / size per path stamp", randomizeSplineStamps);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(selectedPathPointIndex < 0 || selectedPathPointIndex >= pathPoints.Count))
+                {
+                    if (GUILayout.Button("Reset Selected Handles"))
+                        ResetPathTangents(selectedPathPointIndex);
+                    if (GUILayout.Button("Deselect Anchor"))
+                    {
+                        selectedPathPointIndex = -1;
+                        SceneView.RepaintAll();
+                    }
+                }
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(!HasAnyCustomPathTangents()))
+                {
+                    if (GUILayout.Button("Reset All Handles"))
+                        ResetAllPathTangents();
+                }
+                using (new EditorGUI.DisabledScope(pathPoints.Count == 0))
+                {
+                    if (GUILayout.Button("Clear Anchors"))
+                    {
+                        pathPoints.Clear();
+                        selectedPathPointIndex = -1;
+                        pathRandomSeed = UnityEngine.Random.Range(1, int.MaxValue);
+                        pathStatus = "Path anchors cleared.";
+                        SceneView.RepaintAll();
+                    }
+                }
+            }
+
             if (uvRasterMesh != null)
             {
                 EditorGUILayout.LabelField("Seam-Aware Raster Triangles",
@@ -722,25 +779,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                using (new EditorGUI.DisabledScope(pathPoints.Count == 0))
-                {
-                    if (GUILayout.Button("Clear Anchors"))
-                    {
-                        pathPoints.Clear();
-                        pathRandomSeed = UnityEngine.Random.Range(1, int.MaxValue);
-                        pathStatus = "Path anchors cleared.";
-                        SceneView.RepaintAll();
-                    }
-                }
                 using (new EditorGUI.DisabledScope(pathAsset == null))
                 {
                     if (GUILayout.Button("Load Asset Points"))
                         LoadPathAssetPoints();
                 }
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
                 using (new EditorGUI.DisabledScope(pathPoints.Count < 2 || target == null))
                 {
                     if (GUILayout.Button("Save Path Asset"))
@@ -752,9 +795,45 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             EditorGUILayout.LabelField("Path Status", pathStatus);
             EditorGUILayout.HelpBox(
-                "Enable Path Authoring and click the target mesh to add anchors. Apply works in both modes: seam-aware projection paints matching UV charts; legacy mode paints only the hit UV chart and may show gaps at seams. " +
-                "Paths are open unless Close Path is enabled. Per-stamp randomization is off by default to keep path texture orientation stable.",
+                "Click the target mesh to add anchors. Click an anchor to select it, then drag its center to move it on the target. " +
+                "The selected anchor displays incoming/outgoing tangent handles; drag them to reshape the Bézier curve. " +
+                "Reset Selected Handles restores automatic tangents. Backspace removes the selected anchor (or the last anchor when none is selected); Delete removes the selected anchor. " +
+                "Closed-path behavior and reusable path assets are preserved. Applying paints the active mask page as one Undo step.",
                 MessageType.Info);
+        }
+
+        private bool HasAnyCustomPathTangents()
+        {
+            for (int i = 0; i < pathPoints.Count; i++)
+            {
+                if (pathPoints[i].HasCustomTangents)
+                    return true;
+            }
+            return false;
+        }
+
+        private void ResetPathTangents(int index)
+        {
+            if (index < 0 || index >= pathPoints.Count)
+                return;
+
+            SurfacePaintPathPoint point = pathPoints[index];
+            pathPoints[index] = new SurfacePaintPathPoint(point.LocalPosition, point.LocalNormal);
+            pathStatus = "Restored automatic tangents for anchor P" + (index + 1) + ".";
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void ResetAllPathTangents()
+        {
+            for (int i = 0; i < pathPoints.Count; i++)
+            {
+                SurfacePaintPathPoint point = pathPoints[i];
+                pathPoints[i] = new SurfacePaintPathPoint(point.LocalPosition, point.LocalNormal);
+            }
+            pathStatus = "Restored automatic tangents for all path anchors.";
+            Repaint();
+            SceneView.RepaintAll();
         }
 
         private void AddPathAnchor(SurfaceSceneHit hit)
@@ -766,7 +845,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             Vector3 localPosition = target.transform.InverseTransformPoint(hit.Point);
             Vector3 localNormal = localToWorld.transpose.MultiplyVector(hit.Normal).normalized;
             pathPoints.Add(new SurfacePaintPathPoint(localPosition, localNormal));
-            pathStatus = "Added anchor " + pathPoints.Count + ". Add more points or apply the spline.";
+            selectedPathPointIndex = pathPoints.Count - 1;
+            pathStatus = "Added anchor " + pathPoints.Count + ". Select it to edit its position or tangent handles.";
             SceneView.RepaintAll();
             Repaint();
         }
@@ -870,6 +950,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             pathAsset = source;
             pathPoints.Clear();
+            selectedPathPointIndex = -1;
             for (int i = 0; i < source.Points.Count; i++)
                 pathPoints.Add(source.Points[i]);
 
@@ -963,11 +1044,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 for (int segment = 0; segment < segmentCount && !failed; segment++)
                 {
                     int next = (segment + 1) % pathPoints.Count;
-                    Vector3 p1 = pathPoints[segment].LocalPosition;
-                    Vector3 p2 = pathPoints[next].LocalPosition;
-                    float worldSegmentLength = Vector3.Distance(
-                        target.transform.TransformPoint(p1),
-                        target.transform.TransformPoint(p2));
+                    float worldSegmentLength = EstimatePathSegmentLength(segment, closeSplinePath);
                     int steps = Mathf.Clamp(
                         Mathf.CeilToInt(worldSegmentLength / spacingDistance * 1.5f), 1, 4096);
 
@@ -1042,22 +1119,27 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void DrawSplinePathPreview(bool hasCurrentHit, Vector3 currentHitPoint)
         {
-            if (Event.current.type != EventType.Repaint || target == null)
+            if (target == null)
                 return;
 
-            if (pathPoints.Count >= 2)
+            Event currentEvent = Event.current;
+            if (currentEvent == null)
+                return;
+
+            if (currentEvent.type == EventType.Repaint && pathPoints.Count >= 2)
             {
                 List<Vector3> line = new List<Vector3>();
                 int previewSegments = closeSplinePath ? pathPoints.Count : pathPoints.Count - 1;
                 for (int segment = 0; segment < previewSegments; segment++)
                 {
-                    int sampleCount = 12;
+                    const int sampleCount = 24;
                     for (int sample = segment == 0 ? 0 : 1; sample <= sampleCount; sample++)
                     {
                         Vector3 local = EvaluatePathPosition(segment, sample / (float)sampleCount, closeSplinePath);
                         line.Add(target.transform.TransformPoint(local));
                     }
                 }
+
                 Handles.color = new Color(1f, 0.68f, 0.12f, 0.95f);
                 if (line.Count >= 2)
                     Handles.DrawAAPolyLine(3f, line.ToArray());
@@ -1065,13 +1147,48 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             for (int i = 0; i < pathPoints.Count; i++)
             {
-                Vector3 world = target.transform.TransformPoint(pathPoints[i].LocalPosition);
-                Handles.color = Color.white;
-                Handles.DotHandleCap(0, world, Quaternion.identity, HandleUtility.GetHandleSize(world) * 0.08f, EventType.Repaint);
-                Handles.Label(world, "  P" + (i + 1));
+                SurfacePaintPathPoint point = pathPoints[i];
+                Vector3 world = target.transform.TransformPoint(point.LocalPosition);
+                float handleSize = HandleUtility.GetHandleSize(world);
+                bool selected = i == selectedPathPointIndex;
+
+                int anchorControlId = GUIUtility.GetControlID(
+                    ("SurfaceWeaverPathAnchor" + i).GetHashCode(), FocusType.Passive);
+                bool clickedAnchor = currentEvent.type == EventType.MouseDown &&
+                    currentEvent.button == 0 && HandleUtility.nearestControl == anchorControlId;
+
+                Handles.color = selected
+                    ? new Color(0.2f, 0.9f, 1f, 1f)
+                    : Color.white;
+                EditorGUI.BeginChangeCheck();
+                Vector3 movedWorld = Handles.FreeMoveHandle(
+                    anchorControlId,
+                    world,
+                    handleSize * (selected ? 0.11f : 0.085f),
+                    Vector3.zero,
+                    Handles.SphereHandleCap);
+                bool anchorMoved = EditorGUI.EndChangeCheck();
+
+                if (clickedAnchor)
+                {
+                    selectedPathPointIndex = i;
+                    pathStatus = "Selected anchor P" + (i + 1) + ". Drag its center to move it or edit its tangent handles.";
+                    Repaint();
+                    SceneView.RepaintAll();
+                }
+
+                if (anchorMoved)
+                    MovePathAnchorToWorld(i, movedWorld);
+
+                if (currentEvent.type == EventType.Repaint)
+                    Handles.Label(world, "  P" + (i + 1));
+
+                if (selectedPathPointIndex == i)
+                    DrawSelectedPathTangentHandles(i, handleSize);
             }
 
-            if (pathAuthoringEnabled && hasCurrentHit && pathPoints.Count > 0)
+            if (currentEvent.type == EventType.Repaint && pathAuthoringEnabled &&
+                hasCurrentHit && pathPoints.Count > 0)
             {
                 Vector3 last = target.transform.TransformPoint(pathPoints[pathPoints.Count - 1].LocalPosition);
                 Handles.color = new Color(0.3f, 0.85f, 1f, 0.8f);
@@ -1079,16 +1196,224 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
         }
 
+        private void DrawSelectedPathTangentHandles(int index, float anchorHandleSize)
+        {
+            if (index < 0 || index >= pathPoints.Count)
+                return;
+
+            bool hasIncoming = closeSplinePath || index > 0;
+            bool hasOutgoing = closeSplinePath || index < pathPoints.Count - 1;
+            if (!hasIncoming && !hasOutgoing)
+                return;
+
+            SurfacePaintPathPoint point = pathPoints[index];
+            Vector3 anchorWorld = target.transform.TransformPoint(point.LocalPosition);
+            Vector3 incoming = GetIncomingPathTangent(index, closeSplinePath);
+            Vector3 outgoing = GetOutgoingPathTangent(index, closeSplinePath);
+            float tangentHandleSize = anchorHandleSize * 0.075f;
+
+            if (hasIncoming)
+            {
+                Vector3 incomingWorld = anchorWorld + target.transform.TransformVector(incoming);
+                if (Event.current.type == EventType.Repaint)
+                {
+                    Handles.color = new Color(0.25f, 0.85f, 0.45f, 0.95f);
+                    Handles.DrawAAPolyLine(2f, anchorWorld, incomingWorld);
+                    Handles.Label(incomingWorld, " In");
+                }
+
+                int incomingControlId = GUIUtility.GetControlID(
+                    ("SurfaceWeaverPathInTangent" + index).GetHashCode(), FocusType.Passive);
+                Handles.color = new Color(0.25f, 1f, 0.5f, 1f);
+                EditorGUI.BeginChangeCheck();
+                Vector3 movedIncoming = Handles.FreeMoveHandle(
+                    incomingControlId, incomingWorld, tangentHandleSize,
+                    Vector3.zero, Handles.SphereHandleCap);
+                if (EditorGUI.EndChangeCheck())
+                    SetPathTangentFromWorldHandle(index, true, movedIncoming, incoming, outgoing);
+            }
+
+            if (hasOutgoing)
+            {
+                // Re-read after the incoming handle in case it was edited in this event.
+                point = pathPoints[index];
+                incoming = GetIncomingPathTangent(index, closeSplinePath);
+                outgoing = GetOutgoingPathTangent(index, closeSplinePath);
+                Vector3 outgoingWorld = anchorWorld + target.transform.TransformVector(outgoing);
+                if (Event.current.type == EventType.Repaint)
+                {
+                    Handles.color = new Color(1f, 0.55f, 0.18f, 0.95f);
+                    Handles.DrawAAPolyLine(2f, anchorWorld, outgoingWorld);
+                    Handles.Label(outgoingWorld, " Out");
+                }
+
+                int outgoingControlId = GUIUtility.GetControlID(
+                    ("SurfaceWeaverPathOutTangent" + index).GetHashCode(), FocusType.Passive);
+                Handles.color = new Color(1f, 0.6f, 0.2f, 1f);
+                EditorGUI.BeginChangeCheck();
+                Vector3 movedOutgoing = Handles.FreeMoveHandle(
+                    outgoingControlId, outgoingWorld, tangentHandleSize,
+                    Vector3.zero, Handles.SphereHandleCap);
+                if (EditorGUI.EndChangeCheck())
+                    SetPathTangentFromWorldHandle(index, false, movedOutgoing, incoming, outgoing);
+            }
+        }
+
+        private void SetPathTangentFromWorldHandle(
+            int index, bool incomingHandle, Vector3 movedWorld, Vector3 currentIncoming, Vector3 currentOutgoing)
+        {
+            if (index < 0 || index >= pathPoints.Count || target == null)
+                return;
+
+            SurfacePaintPathPoint point = pathPoints[index];
+            Vector3 anchorWorld = target.transform.TransformPoint(point.LocalPosition);
+            Vector3 movedLocalOffset = target.transform.InverseTransformVector(movedWorld - anchorWorld);
+            Vector3 inTangent = incomingHandle ? movedLocalOffset : currentIncoming;
+            Vector3 outTangent = incomingHandle ? currentOutgoing : movedLocalOffset;
+
+            pathPoints[index] = new SurfacePaintPathPoint(
+                point.LocalPosition, point.LocalNormal, inTangent, outTangent, true);
+            pathStatus = (incomingHandle ? "Edited incoming" : "Edited outgoing") +
+                " tangent for anchor P" + (index + 1) + ". Save the path asset to preserve the edit.";
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void MovePathAnchorToWorld(int index, Vector3 proposedWorld)
+        {
+            if (index < 0 || index >= pathPoints.Count || target == null)
+                return;
+
+            MeshCollider collider = target.GetComponent<MeshCollider>();
+            if (collider == null || collider.convex || collider.sharedMesh == null)
+            {
+                pathStatus = "Anchor movement requires a non-convex MeshCollider on the target so the anchor can stay on the surface.";
+                Repaint();
+                return;
+            }
+
+            Vector3 snappedWorld = collider.ClosestPoint(proposedWorld);
+            float snapDistance = Vector3.Distance(proposedWorld, snappedWorld);
+            Renderer targetRenderer = target.GetComponent<Renderer>();
+            float allowedSnapDistance = targetRenderer != null
+                ? Mathf.Max(brushRadius * 2f, targetRenderer.bounds.extents.magnitude * 0.25f)
+                : Mathf.Max(brushRadius * 2f, 0.5f);
+            if (snapDistance > allowedSnapDistance)
+            {
+                pathStatus = "Anchor was not moved because the dragged point is too far from the target surface. Drag closer to the mesh.";
+                Repaint();
+                return;
+            }
+
+            SurfacePaintPathPoint point = pathPoints[index];
+            Vector3 worldNormal = LocalNormalToWorld(point.LocalNormal);
+            float normalProbe = Mathf.Max(0.05f, brushRadius * 0.05f);
+            RaycastHit normalHit;
+            if (collider.Raycast(new Ray(snappedWorld + worldNormal * normalProbe, -worldNormal),
+                    out normalHit, normalProbe * 2f))
+            {
+                snappedWorld = normalHit.point;
+                worldNormal = normalHit.normal;
+            }
+            else if (collider.Raycast(new Ray(snappedWorld - worldNormal * normalProbe, worldNormal),
+                         out normalHit, normalProbe * 2f))
+            {
+                snappedWorld = normalHit.point;
+                worldNormal = normalHit.normal;
+            }
+
+            Vector3 localPosition = target.transform.InverseTransformPoint(snappedWorld);
+            Vector3 localNormal = target.transform.localToWorldMatrix.transpose.MultiplyVector(worldNormal).normalized;
+            pathPoints[index] = new SurfacePaintPathPoint(
+                localPosition, localNormal,
+                point.LocalInTangent, point.LocalOutTangent, point.HasCustomTangents);
+            pathStatus = "Moved anchor P" + (index + 1) + " on the target surface.";
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
         private Vector3 EvaluatePathPosition(int segment, float t, bool closed)
         {
             int count = pathPoints.Count;
-            int i0 = closed ? (segment - 1 + count) % count : Mathf.Max(0, segment - 1);
-            int i1 = segment;
-            int i2 = closed ? (segment + 1) % count : Mathf.Min(count - 1, segment + 1);
-            int i3 = closed ? (segment + 2) % count : Mathf.Min(count - 1, segment + 2);
-            return CatmullRom(
-                pathPoints[i0].LocalPosition, pathPoints[i1].LocalPosition,
-                pathPoints[i2].LocalPosition, pathPoints[i3].LocalPosition, t);
+            if (count < 2)
+                return count == 1 ? pathPoints[0].LocalPosition : Vector3.zero;
+
+            int startIndex = segment;
+            int endIndex = closed ? (segment + 1) % count : segment + 1;
+            Vector3 start = pathPoints[startIndex].LocalPosition;
+            Vector3 end = pathPoints[endIndex].LocalPosition;
+            Vector3 control1 = start + GetOutgoingPathTangent(startIndex, closed);
+            Vector3 control2 = end + GetIncomingPathTangent(endIndex, closed);
+            return CubicBezier(start, control1, control2, end, t);
+        }
+
+        private Vector3 GetOutgoingPathTangent(int index, bool closed)
+        {
+            int count = pathPoints.Count;
+            if (index < 0 || index >= count || count < 2)
+                return Vector3.zero;
+
+            SurfacePaintPathPoint point = pathPoints[index];
+            if (point.HasCustomTangents)
+                return point.LocalOutTangent;
+
+            if (!closed && index == count - 1)
+                return Vector3.zero;
+            if (!closed && index == 0)
+                return (pathPoints[1].LocalPosition - point.LocalPosition) / 6f;
+
+            Vector3 previous = pathPoints[(index - 1 + count) % count].LocalPosition;
+            Vector3 next = pathPoints[(index + 1) % count].LocalPosition;
+            return (next - previous) / 6f;
+        }
+
+        private Vector3 GetIncomingPathTangent(int index, bool closed)
+        {
+            int count = pathPoints.Count;
+            if (index < 0 || index >= count || count < 2)
+                return Vector3.zero;
+
+            SurfacePaintPathPoint point = pathPoints[index];
+            if (point.HasCustomTangents)
+                return point.LocalInTangent;
+
+            if (!closed && index == 0)
+                return Vector3.zero;
+            if (!closed && index == count - 1)
+                return (pathPoints[count - 2].LocalPosition - point.LocalPosition) / 6f;
+
+            Vector3 previous = pathPoints[(index - 1 + count) % count].LocalPosition;
+            Vector3 next = pathPoints[(index + 1) % count].LocalPosition;
+            return (previous - next) / 6f;
+        }
+
+        private float EstimatePathSegmentLength(int segment, bool closed)
+        {
+            if (target == null || pathPoints.Count < 2)
+                return 0f;
+
+            const int sampleCount = 16;
+            Vector3 previous = target.transform.TransformPoint(EvaluatePathPosition(segment, 0f, closed));
+            float length = 0f;
+            for (int i = 1; i <= sampleCount; i++)
+            {
+                Vector3 current = target.transform.TransformPoint(
+                    EvaluatePathPosition(segment, i / (float)sampleCount, closed));
+                length += Vector3.Distance(previous, current);
+                previous = current;
+            }
+            return length;
+        }
+
+        private static Vector3 CubicBezier(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        {
+            float oneMinusT = 1f - t;
+            float oneMinusT2 = oneMinusT * oneMinusT;
+            float t2 = t * t;
+            return oneMinusT2 * oneMinusT * p0 +
+                3f * oneMinusT2 * t * p1 +
+                3f * oneMinusT * t2 * p2 +
+                t2 * t * p3;
         }
 
         private Vector3 EvaluatePathNormal(int segment, float t, bool closed)
@@ -1098,15 +1423,6 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             Vector3 n2 = pathPoints[next].LocalNormal;
             Vector3 normal = Vector3.Slerp(n1, n2, t);
             return normal.sqrMagnitude > 0.000001f ? normal.normalized : Vector3.up;
-        }
-
-        private static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
-        {
-            float t2 = t * t;
-            float t3 = t2 * t;
-            return 0.5f * ((2f * p1) + (-p0 + p2) * t +
-                (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 +
-                (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
         }
 
         private Vector3 LocalNormalToWorld(Vector3 localNormal)
@@ -1621,7 +1937,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "SurfaceWeaverScenePaint".GetHashCode(),
                 FocusType.Passive);
 
-            if (currentEvent.type == EventType.Layout && (hitFound || isPainting))
+            if (currentEvent.type == EventType.Layout && (hitFound || isPainting) && !pathAuthoringEnabled)
             {
                 HandleUtility.AddDefaultControl(controlId);
             }
@@ -1646,23 +1962,33 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             {
                 DrawSplinePathPreview(hitFound, hitFound ? hit.Point : Vector3.zero);
 
+                // Register a default control only after path handles have had a chance to
+                // register their own controls. This keeps mesh clicks inside path authoring
+                // without stealing clicks/drags from anchors and tangent handles.
                 if (currentEvent.type == EventType.Layout && (hitFound || pathPoints.Count > 0))
                     HandleUtility.AddDefaultControl(controlId);
 
                 if (currentEvent.type == EventType.MouseDown &&
-                    currentEvent.button == 0 && hitFound)
+                    currentEvent.button == 0 && hitFound && GUIUtility.hotControl == 0)
                 {
                     AddPathAnchor(hit);
                     currentEvent.Use();
                 }
-                else if (currentEvent.type == EventType.KeyDown &&
-                         currentEvent.keyCode == KeyCode.Backspace && pathPoints.Count > 0)
+                else if (currentEvent.type == EventType.KeyDown && pathPoints.Count > 0 &&
+                         (currentEvent.keyCode == KeyCode.Backspace || currentEvent.keyCode == KeyCode.Delete))
                 {
-                    pathPoints.RemoveAt(pathPoints.Count - 1);
-                    pathStatus = "Removed the last spline anchor.";
-                    Repaint();
-                    SceneView.RepaintAll();
-                    currentEvent.Use();
+                    int removeIndex = selectedPathPointIndex >= 0 && selectedPathPointIndex < pathPoints.Count
+                        ? selectedPathPointIndex
+                        : (currentEvent.keyCode == KeyCode.Backspace ? pathPoints.Count - 1 : -1);
+                    if (removeIndex >= 0)
+                    {
+                        pathPoints.RemoveAt(removeIndex);
+                        selectedPathPointIndex = -1;
+                        pathStatus = "Removed spline anchor P" + (removeIndex + 1) + ".";
+                        Repaint();
+                        SceneView.RepaintAll();
+                        currentEvent.Use();
+                    }
                 }
 
                 if (currentEvent.type == EventType.MouseMove ||
@@ -2110,7 +2436,12 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (lastReport == null)
                 return;
 
-            EditorGUILayout.LabelField("Result", lastReport.IsValid ? "No blocking issues found" : "Blocking issues found");
+            string validationResult = !lastReport.IsValid
+                ? "Blocking errors found"
+                : lastReport.Warnings.Count > 0
+                    ? "Completed with warnings — review the diagnostics below"
+                    : "No issues detected";
+            EditorGUILayout.LabelField("Result", validationResult);
             EditorGUILayout.LabelField("Vertices", lastReport.VertexCount.ToString());
             EditorGUILayout.LabelField("Triangles", lastReport.TriangleCount.ToString());
             EditorGUILayout.LabelField("UV Entries", lastReport.UvCount.ToString());
@@ -2118,8 +2449,71 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             EditorGUILayout.LabelField("Degenerate UV triangles", lastReport.DegenerateUvTriangleCount.ToString());
             EditorGUILayout.LabelField("Overlapping UV triangle pairs", lastReport.OverlappingUvTrianglePairCount.ToString());
             EditorGUILayout.LabelField("UV seam edges", lastReport.UvSeamEdgeCount.ToString());
-            EditorGUILayout.LabelField("Overlap candidate tests", lastReport.OverlapCandidatePairTests.ToString());
-            EditorGUILayout.LabelField("Overlap analysis", lastReport.OverlapAnalysisCompleted ? "Complete" : "Partial / safety limit reached");
+            EditorGUILayout.Space(4f);
+            EditorGUILayout.LabelField("UV Island Analysis", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Connected UV islands", lastReport.UvIslandCount.ToString());
+            EditorGUILayout.LabelField("Fully stacked island pairs", lastReport.StackedUvIslandPairCount.ToString());
+            EditorGUILayout.LabelField("Fully mirrored island pairs", lastReport.MirroredUvIslandPairCount.ToString());
+            EditorGUILayout.LabelField("Contained island overlap pairs", lastReport.ContainedUvIslandOverlapPairCount.ToString());
+            EditorGUILayout.LabelField("Partial island overlap pairs", lastReport.PartialUvIslandOverlapPairCount.ToString());
+            EditorGUILayout.LabelField("Overlapping island pairs", lastReport.OverlappingUvIslandPairCount.ToString());
+            EditorGUILayout.LabelField("Triangle overlaps within connected islands", lastReport.SameIslandOverlappingTrianglePairCount.ToString());
+            EditorGUILayout.LabelField("Mirrored overlaps within islands", lastReport.MirroredOverlapWithinIslandTrianglePairCount.ToString());
+            EditorGUILayout.LabelField("Same-orientation overlaps within islands", lastReport.SameOrientationOverlapWithinIslandTrianglePairCount.ToString());
+            EditorGUILayout.LabelField("Island pair checks", lastReport.IslandPairCandidateTests.ToString());
+            EditorGUILayout.LabelField("Island triangle-pair checks", lastReport.IslandOverlapCandidateTrianglePairTests.ToString());
+            EditorGUILayout.LabelField("Island overlap analysis", lastReport.IslandOverlapAnalysisCompleted ? "Complete" : "Partial / safety limit reached");
+            EditorGUILayout.LabelField("Triangle overlap candidate tests", lastReport.OverlapCandidatePairTests.ToString());
+            EditorGUILayout.LabelField("Triangle overlap analysis", lastReport.OverlapAnalysisCompleted ? "Complete" : "Partial / safety limit reached");
+
+            if (lastReport.UvIslandSummaries.Count > 0)
+            {
+                showUvIslandDetails = EditorGUILayout.Foldout(
+                    showUvIslandDetails,
+                    "Island Bounds (" + lastReport.UvIslandSummaries.Count + ")",
+                    true);
+                if (showUvIslandDetails)
+                {
+                    int visibleCount = Mathf.Min(lastReport.UvIslandSummaries.Count, 20);
+                    for (int i = 0; i < visibleCount; i++)
+                        EditorGUILayout.LabelField(lastReport.UvIslandSummaries[i], EditorStyles.miniLabel);
+                    if (lastReport.UvIslandSummaries.Count > visibleCount)
+                        EditorGUILayout.LabelField("... and " + (lastReport.UvIslandSummaries.Count - visibleCount) + " more island(s).", EditorStyles.miniLabel);
+                }
+            }
+
+            if (lastReport.SameIslandOverlapSummaries.Count > 0)
+            {
+                showSameIslandOverlapDetails = EditorGUILayout.Foldout(
+                    showSameIslandOverlapDetails,
+                    "Overlaps Within Connected Islands (" + lastReport.SameIslandOverlappingTrianglePairCount + ")",
+                    true);
+                if (showSameIslandOverlapDetails)
+                {
+                    int visibleCount = Mathf.Min(lastReport.SameIslandOverlapSummaries.Count, 20);
+                    for (int i = 0; i < visibleCount; i++)
+                        EditorGUILayout.LabelField(lastReport.SameIslandOverlapSummaries[i], EditorStyles.miniLabel);
+                    if (lastReport.SameIslandOverlapSummaries.Count > visibleCount)
+                        EditorGUILayout.LabelField("... and more internal overlap pair(s) not listed.", EditorStyles.miniLabel);
+                }
+            }
+
+            if (lastReport.UvIslandOverlapSummaries.Count > 0)
+            {
+                showUvIslandOverlapDetails = EditorGUILayout.Foldout(
+                    showUvIslandOverlapDetails,
+                    "Island Overlap Pairs (" + lastReport.OverlappingUvIslandPairCount + ")",
+                    true);
+                if (showUvIslandOverlapDetails)
+                {
+                    int visibleCount = Mathf.Min(lastReport.UvIslandOverlapSummaries.Count, 20);
+                    for (int i = 0; i < visibleCount; i++)
+                        EditorGUILayout.LabelField(lastReport.UvIslandOverlapSummaries[i], EditorStyles.miniLabel);
+                    if (lastReport.UvIslandOverlapSummaries.Count > visibleCount)
+                        EditorGUILayout.LabelField("... and more overlap pair(s) not listed.", EditorStyles.miniLabel);
+                }
+            }
+
             foreach (string error in lastReport.Errors)
                 EditorGUILayout.HelpBox(error, MessageType.Error);
             foreach (string warning in lastReport.Warnings)
@@ -2128,16 +2522,427 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 EditorGUILayout.HelpBox(info, MessageType.Info);
         }
 
+        private void DrawUvGutterPaddingSection()
+        {
+            showUvGutterPaddingSection = EditorGUILayout.Foldout(
+                showUvGutterPaddingSection, "UV Gutter Padding", true);
+            if (!showUvGutterPaddingSection)
+                return;
+
+            EditorGUILayout.HelpBox(
+                "Copies the nearest UV-island edge texels outward into unused mask-page space. " +
+                "It preserves every pixel covered by the mesh and copies all four RGBA channels together. " +
+                "The operation is one Undo step; use Save Mask PNG to persist it. It does not modify mesh UVs.",
+                MessageType.Info);
+
+            uvGutterPaddingPixels = EditorGUILayout.IntSlider(
+                "Gutter Width (Pixels)", uvGutterPaddingPixels, 1, 32);
+
+            SurfaceLayerDefinition selectedLayer = GetSelectedLayer();
+            bool sessionReady = target != null && profile != null &&
+                                target.TryGetMesh(out Mesh _) &&
+                                target.UvChannel == 0 &&
+                                IsSessionForLayer(selectedLayer) &&
+                                !isPainting;
+
+            if (!sessionReady)
+            {
+                EditorGUILayout.HelpBox(
+                    target != null && target.UvChannel != 0
+                        ? "The current painter and mask shader use UV0. Set the target UV Channel to 0 before applying gutter padding."
+                        : "Select a valid mesh target and load the active mask page for the selected layer before applying gutter padding.",
+                    MessageType.Warning);
+            }
+
+            if (sessionReady)
+            {
+                long pixelCount = (long)gpuEngine.Width * gpuEngine.Height;
+                long queuePixels = Math.Min(pixelCount, 2000000L);
+                long estimatedCpuBytes = pixelCount * 11L + queuePixels * sizeof(int);
+                EditorGUILayout.LabelField("Estimated CPU staging memory", FormatBytes(estimatedCpuBytes));
+                if (gpuEngine.Width >= 4096 || gpuEngine.Height >= 4096)
+                {
+                    EditorGUILayout.HelpBox(
+                        "4096 x 4096 mask processing can require roughly 200 MiB of temporary CPU memory in addition to the active GPU buffers. Verify at 512/1024/2048 first and profile 4096 separately.",
+                        MessageType.Warning);
+                }
+            }
+
+            using (new EditorGUI.DisabledScope(!sessionReady))
+            {
+                if (GUILayout.Button("Apply UV Gutter Padding to Active Mask"))
+                    ApplyUvGutterPadding();
+            }
+        }
+
+
+        private void DrawMaskDilationSection()
+        {
+            showMaskDilationSection = EditorGUILayout.Foldout(
+                showMaskDilationSection, "UV-Constrained Mask Dilation", true);
+            if (!showMaskDilationSection)
+                return;
+
+            SurfaceLayerDefinition selectedLayer = GetSelectedLayer();
+            EditorGUILayout.HelpBox(
+                "Expands the selected layer's non-zero mask values into nearby texels covered by the mesh UV islands. " +
+                "Only the selected RGBA channel is changed; pixels outside the mesh UVs and other channels are preserved. " +
+                "This changes the painted surface mask (unlike UV Gutter Padding, which copies values outside islands). " +
+                "The operation is one Undo step; use Save Mask PNG to persist it.",
+                MessageType.Info);
+
+            maskDilationRadiusPixels = EditorGUILayout.IntSlider(
+                "Dilation Radius (Pixels)", maskDilationRadiusPixels, 1, 32);
+            if (selectedLayer != null)
+            {
+                EditorGUILayout.LabelField(
+                    "Target Channel", selectedLayer.MaskChannel.ToString());
+            }
+
+            bool sessionReady = target != null && profile != null && selectedLayer != null &&
+                                target.TryGetMesh(out Mesh _) && target.UvChannel == 0 &&
+                                IsSessionForLayer(selectedLayer) && !isPainting;
+            if (!sessionReady)
+            {
+                EditorGUILayout.HelpBox(
+                    target != null && target.UvChannel != 0
+                        ? "The current mask workflow uses UV0. Set the target UV Channel to 0 before applying mask dilation."
+                        : "Select a valid mesh target and load the selected layer's mask page before applying mask dilation.",
+                    MessageType.Warning);
+            }
+
+            if (sessionReady)
+            {
+                long pixelCount = (long)gpuEngine.Width * gpuEngine.Height;
+                EditorGUILayout.LabelField(
+                    "Estimated additional processor memory",
+                    FormatBytes(pixelCount * 3L + (long)Mathf.Max(gpuEngine.Width, gpuEngine.Height) * 8L));
+                if (gpuEngine.Width >= 4096 || gpuEngine.Height >= 4096)
+                {
+                    EditorGUILayout.HelpBox(
+                        "At 4096 x 4096, UV ownership and channel staging require about 48 MiB of additional CPU memory, " +
+                        "excluding the GPU buffers, readback texture and Color32 readback array. Verify at 512/1024/2048 first.",
+                        MessageType.Warning);
+                }
+            }
+
+            using (new EditorGUI.DisabledScope(!sessionReady))
+            {
+                if (GUILayout.Button("Apply Mask Dilation to Selected Channel") &&
+                    EditorUtility.DisplayDialog(
+                        "SurfaceWeaver Mask Dilation",
+                        "Expand the existing values in the selected " + selectedLayer.MaskChannel +
+                        " channel by " + maskDilationRadiusPixels +
+                        " pixel(s), constrained to the target's UV islands?\n\n" +
+                        "This changes the painted surface mask. You can Undo this operation before saving.",
+                        "Dilate", "Cancel"))
+                {
+                    ApplyMaskDilation();
+                }
+            }
+        }
+
+        private void ApplyMaskDilation()
+        {
+            SurfaceLayerDefinition layer = GetSelectedLayer();
+            if (target == null || profile == null || layer == null || gpuEngine == null ||
+                !gpuEngine.IsInitialized || !target.TryGetMesh(out Mesh mesh) ||
+                target.UvChannel != 0 || !IsSessionForLayer(layer))
+            {
+                paintStatus = "Load the selected layer's mask page before applying mask dilation.";
+                Repaint();
+                return;
+            }
+
+            int channelIndex = (int)layer.MaskChannel;
+            if (channelIndex < 0 || channelIndex > 3)
+            {
+                paintStatus = "The selected layer does not reference a valid RGBA mask channel.";
+                Repaint();
+                return;
+            }
+
+            StopStroke();
+            Texture2D readback = gpuEngine.CreateReadbackTexture(out string error);
+            if (readback == null)
+            {
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver Mask Dilation", error, "OK");
+                Repaint();
+                return;
+            }
+
+            Color32[] pixels;
+            try
+            {
+                pixels = readback.GetPixels32();
+            }
+            catch (Exception exception)
+            {
+                error = "Could not read the active mask pixels: " + exception.Message;
+                DestroyImmediate(readback);
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver Mask Dilation", error, "OK");
+                Repaint();
+                return;
+            }
+            DestroyImmediate(readback);
+
+            SurfaceUvMaskDilationProcessor.Result result =
+                default(SurfaceUvMaskDilationProcessor.Result);
+            bool dilationSucceeded = false;
+            try
+            {
+                dilationSucceeded = SurfaceUvMaskDilationProcessor.TryApplyDilation(
+                    mesh,
+                    target.UvChannel,
+                    pixels,
+                    gpuEngine.Width,
+                    gpuEngine.Height,
+                    channelIndex,
+                    maskDilationRadiusPixels,
+                    out result,
+                    out error);
+            }
+            catch (Exception exception)
+            {
+                error = "Mask dilation failed safely before the mask was updated: " + exception.Message;
+                dilationSucceeded = false;
+            }
+
+            if (!dilationSucceeded)
+            {
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver Mask Dilation", error, "OK");
+                Repaint();
+                return;
+            }
+
+            if (result.ChangedPixels == 0)
+            {
+                paintStatus = "No additional covered texels needed changing for the selected " + layer.MaskChannel +
+                              " channel at the requested radius. " +
+                              "No Undo state was created.";
+                Repaint();
+                return;
+            }
+
+            if (!gpuEngine.ApplyPixelChanges(pixels, out error))
+            {
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver Mask Dilation", error, "OK");
+                Repaint();
+                return;
+            }
+
+            hasUnsavedChanges = true;
+            BindWorkingMaskPreview();
+            paintStatus = "Dilated " + layer.MaskChannel + " across " + result.ChangedPixels.ToString("N0") +
+                          " surface texel(s) from " + result.SeedPixels.ToString("N0") +
+                          " painted seed texel(s) on " + result.IslandCount +
+                          " UV island(s). Other channels and pixels outside the UV islands were preserved. " +
+                          "One Undo step is available; save the mask page to persist it.";
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void ApplyUvGutterPadding()
+        {
+            if (target == null || profile == null || gpuEngine == null || !gpuEngine.IsInitialized ||
+                !target.TryGetMesh(out Mesh mesh) || target.UvChannel != 0 || !IsSessionForLayer(GetSelectedLayer()))
+            {
+                paintStatus = "Load the selected layer's mask page before applying UV gutter padding.";
+                Repaint();
+                return;
+            }
+
+            StopStroke();
+            Texture2D readback = gpuEngine.CreateReadbackTexture(out string error);
+            if (readback == null)
+            {
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver UV Gutter Padding", error, "OK");
+                Repaint();
+                return;
+            }
+
+            Color32[] pixels;
+            try
+            {
+                pixels = readback.GetPixels32();
+            }
+            catch (Exception exception)
+            {
+                error = "Could not read the active mask pixels: " + exception.Message;
+                DestroyImmediate(readback);
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver UV Gutter Padding", error, "OK");
+                Repaint();
+                return;
+            }
+            DestroyImmediate(readback);
+
+            // Initialize the result before entering the try block. If TryApplyPadding throws
+            // before assigning its out parameter, the catch path still returns safely and
+            // C# definite-assignment analysis can prove every later read is valid.
+            SurfaceUvGutterProcessor.Result result = default(SurfaceUvGutterProcessor.Result);
+            bool paddingSucceeded = false;
+            try
+            {
+                paddingSucceeded = SurfaceUvGutterProcessor.TryApplyPadding(
+                    mesh,
+                    target.UvChannel,
+                    pixels,
+                    gpuEngine.Width,
+                    gpuEngine.Height,
+                    uvGutterPaddingPixels,
+                    out result,
+                    out error);
+            }
+            catch (Exception exception)
+            {
+                error = "UV gutter processing failed safely before the mask was updated: " + exception.Message;
+                paddingSucceeded = false;
+            }
+
+            if (!paddingSucceeded)
+            {
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver UV Gutter Padding", error, "OK");
+                Repaint();
+                return;
+            }
+
+            if (!gpuEngine.ApplyPixelChanges(pixels, out error))
+            {
+                paintStatus = error;
+                EditorUtility.DisplayDialog("SurfaceWeaver UV Gutter Padding", error, "OK");
+                Repaint();
+                return;
+            }
+
+            hasUnsavedChanges = true;
+            BindWorkingMaskPreview();
+            paintStatus = "Added " + result.PaddedPixels.ToString("N0") +
+                          " gutter texels around " + result.IslandCount +
+                          " UV island(s). The operation is one Undo step; save the mask page to keep it.";
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void DrawMipMapBleedingPreventionSection()
+        {
+            showMipMapBleedingPreventionSection = EditorGUILayout.Foldout(
+                showMipMapBleedingPreventionSection, "Mip-map Bleeding Prevention", true);
+            if (!showMipMapBleedingPreventionSection)
+                return;
+
+            EditorGUILayout.HelpBox(
+                "Mask pages use bleed-safe sampling: mipmaps are disabled for packed RGBA mask textures, " +
+                "and the URP layered shader samples the mask at mip level 0. This prevents generated lower mip levels " +
+                "from averaging mask values across neighboring UV islands. Bilinear filtering and Clamp wrapping remain enabled. " +
+                "Albedo textures keep their normal mipmaps. Trade-off: very distant/minified surfaces can show more mask-edge aliasing; " +
+                "test this on the target camera and mobile device.",
+                MessageType.Info);
+
+            Texture2D maskPage = activeMaskAsset;
+            if (maskPage == null && profile != null)
+            {
+                SurfaceLayerDefinition selectedLayer = GetSelectedLayer();
+                if (selectedLayer != null)
+                    maskPage = profile.GetMaskPage(selectedLayer.MaskPageIndex);
+            }
+
+            if (maskPage == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "Load a mask page or assign a mask page to the selected profile layer to inspect its import settings.",
+                    MessageType.Warning);
+                return;
+            }
+
+            string assetPath = AssetDatabase.GetAssetPath(maskPage);
+            TextureImporter importer = string.IsNullOrEmpty(assetPath)
+                ? null
+                : AssetImporter.GetAtPath(assetPath) as TextureImporter;
+
+            EditorGUILayout.LabelField("Mask Page", maskPage.name);
+            if (importer == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "The selected mask page is not an imported texture asset. Bleed-safe importer settings can only be applied to PNG or other imported Texture2D assets.",
+                    MessageType.Warning);
+                return;
+            }
+
+            EditorGUILayout.LabelField(
+                "Mip-map Status",
+                importer.mipmapEnabled ? "Enabled — mip bleeding risk" : "Disabled — bleed-safe");
+            EditorGUILayout.LabelField("Filter / Wrap", importer.filterMode + " / " + importer.wrapMode);
+            EditorGUILayout.LabelField("Color Space / Compression",
+                (importer.sRGBTexture ? "sRGB" : "Linear") + " / " + importer.textureCompression);
+
+            if (importer.mipmapEnabled)
+            {
+                EditorGUILayout.HelpBox(
+                    "This mask page currently has mipmaps enabled. Saving it through SurfaceWeaver will apply the bleed-safe policy automatically. " +
+                    "You can also migrate the existing asset now without changing its mask pixels.",
+                    MessageType.Warning);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox(
+                    "This mask page has mipmaps disabled. The layered shader also samples mask level 0 as a safeguard.",
+                    MessageType.Info);
+            }
+
+            using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(assetPath)))
+            {
+                if (GUILayout.Button("Apply Bleed-Safe Import Settings to Current Mask Page") &&
+                    EditorUtility.DisplayDialog(
+                        "SurfaceWeaver Bleed-Safe Mask Settings",
+                        "Apply these settings to the current mask texture asset?\n\n" +
+                        "- Disable mipmaps\n" +
+                        "- Use Linear color space\n" +
+                        "- Use Bilinear filtering and Clamp wrapping\n" +
+                        "- Use Uncompressed texture data\n\n" +
+                        "The PNG pixel data and asset GUID are not intentionally changed. This may increase distant mask-edge aliasing.",
+                        "Apply Settings", "Cancel"))
+                {
+                    Texture2D refreshed;
+                    string error;
+                    if (SurfaceMaskAssetUtility.ApplyBleedSafeSettings(maskPage, out refreshed, out error))
+                    {
+                        if (activeMaskAsset == maskPage)
+                            activeMaskAsset = refreshed;
+                        if (gpuEngine != null && gpuEngine.IsInitialized)
+                            BindWorkingMaskPreview();
+                        paintStatus = "Applied bleed-safe import settings to " + refreshed.name + ". Mask mipmaps are disabled.";
+                        Repaint();
+                        SceneView.RepaintAll();
+                    }
+                    else
+                    {
+                        paintStatus = error;
+                        EditorUtility.DisplayDialog("SurfaceWeaver Bleed-Safe Mask Settings", error, "OK");
+                        Repaint();
+                    }
+                }
+            }
+        }
+
         private void DrawRoadmapSection()
         {
             EditorGUILayout.LabelField("Development Status", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Included: custom mesh targets, reusable profiles, UV range/degenerate/overlap/seam diagnostics, " +
-                "Scene View picking, world-space brush preview, GPU paint/erase/smooth stamps, selected-channel fill/clear, " +
-                "packed RGBA pages, starter brushes, stroke Undo/Redo and PNG persistence.\n\n" +
-                "Added in v0.6: seam-aware world-space UV raster projection and reusable Catmull-Rom spline/path painting. " +
-                "Still planned: UV gutter padding/dilation, mip-bleed analysis, editable/variable-width paths, scatter placement, " +
-                "multi-object batch authoring, production multi-layer URP shader, runtime API and package validation.",
+                "v0.7 UV quality and rendering: profile-driven multi-layer URP rendering, packed RGBA mask binding, per-layer material controls, " +
+                "UV island grouping and mirrored/stacked/contained/partial overlap diagnostics. v0.7.9 adds island-aware UV gutter padding; " +
+                "v0.7.10 adds selected-channel mask dilation constrained to UV islands (verify both in the consuming Unity project). " +
+                "Remaining v0.7 work: mip-map bleeding prevention and mobile shader optimization.\n\n" +
+                "v0.8 advanced authoring: editable spline handles/closed paths, variable width and pressure, " +
+                "multi-mesh editing/batch export, object and vegetation scatter, Flood Fill and additional surface tools.\n\n" +
+                "v0.9 quality: automated tests, Graphics API compatibility, large-mesh profiling, memory optimization and edge-case testing. " +
+                "v1.0: professional Editor UI, Lite/Pro editions, demo content, documentation/tutorials and Asset Store release preparation.",
                 MessageType.None);
         }
     }

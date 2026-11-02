@@ -1,43 +1,40 @@
 # SurfaceWeaver Development Roadmap
 
-## v0.6.6 – Seam-aware projection foundation
+This roadmap reflects the product plan confirmed by the developer.
 
-- Surface-facing spherical projection and scale-independent UV raster triangle validation.
-- Standard cylinder seam painting confirmed by the developer in Unity.
-- Smart UV regression testing remains part of the quality pass.
+## v0.7 — UV quality and rendering
+- UV island grouping and mirrored/stacked UV diagnostics.
+- Automatic UV gutter padding and mask dilation.
+- Mip-map bleeding prevention.
+- Complete profile-driven multi-layer URP shader.
+- Automatic RGBA mask-to-layer binding.
+- Per-layer textures, tint, tiling and opacity.
+- Mobile shader optimization.
 
-## v0.7.0 – Profile-driven URP rendering (implementation created; Unity validation pending)
+## v0.8 — Advanced authoring
+- Editable spline anchors and Bézier tangent handles (preview source added in v0.8.0-preview.1).
+- Closed paths (already supported by the v0.7.12 path authoring toggle; retain and regression-test).
+- Variable path width and pressure.
+- Multi-mesh editing and batch export.
+- Object and vegetation scatter placement.
+- Flood Fill and additional surface tools.
 
-- Base albedo plus up to four ordered overlay layers.
-- One packed RGBA mask page (R/G/B/A) drives the four overlay masks.
-- Per-layer albedo, tint, tiling, opacity and channel selection.
-- Mesh UV0 or World Planar XZ albedo mapping; paint masks remain on UV0.
-- Dedicated material asset binding without MaterialPropertyBlocks, to preserve SRP Batcher eligibility.
-- UniversalForwardOnly lighting (Forward and Deferred renderers), main light, SH ambient, optional additional lights, fog, ShadowCaster and DepthOnly passes. SSAO DepthNormalsOnly and Meta/lightmap passes remain deferred.
-- Needs Unity C# compilation, URP shader compilation, visual verification, SRP Batcher check and Android profiling.
+## v0.9 — Quality and optimization
+- Automated tests.
+- Graphics API compatibility.
+- Large-mesh profiling.
+- Memory optimization.
+- Comprehensive edge-case testing.
 
-## v0.8 – UV and authoring quality
+## v1.0 — Release candidate
+- Professional Editor UI.
+- Free Lite and paid Pro editions.
+- Demo project and sample assets.
+- Documentation and tutorials.
+- Asset Store validation and release preparation.
 
-- UV gutter padding/dilation and mip-bleed handling.
-- Better mirrored/stacked UV diagnostics and island margin warnings.
-- Improved spline editing, variable width and efficient batched path application.
-- Multi-target authoring and batch mask export.
-- Scatter placement, region fill and reusable surface recipes.
-
-## v0.9 – Compatibility and performance
-
-- Automated EditMode tests for diagnostics, seam projection, channel preservation, path assets and Undo/Redo.
-- Graphics API testing (Direct3D 11/12, Vulkan and Metal where available).
-- Unity/URP compatibility matrix.
-- Profiling on low/mid-tier desktop and target Android devices.
-- Large-mesh and many-stamp optimization.
-- Edge cases: non-uniform/negative transforms, submeshes, UV boundaries, mirrored/overlapping UVs.
-
-## v1.0 – Asset Store release candidate
-
-- Polished Editor UI and first-run setup.
-- Final Lite/Pro feature split.
-- Demo project, sample meshes, profiles, brush presets and sample textures.
-- Documentation, tutorials, support policy and version matrix.
-- Third-party/license audit and AI-content disclosure for any generated content included.
-- Asset Store packaging, screenshots, trailer, validator pass and final compatibility tests.
+## Future enhancement backlog
+- Per-layer normal maps.
+- Reusable surface recipes.
+- Advanced save/recovery workflows.
+- Additional robustness for non-uniform/negative transforms, submeshes, UV boundaries and high-curvature geometry.

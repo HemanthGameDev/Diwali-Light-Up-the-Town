@@ -32,7 +32,9 @@ This backlog separates source features from validated release status. A feature 
 - Mobile texture-sample budget controls and runtime profile/mask consumption.
 
 ## v0.8 — Advanced authoring
-- Editable path handles, closed paths, variable width and pressure/opacity curves.
+- Editable Scene View path anchors and incoming/outgoing Bézier tangent handles (source preview added in v0.8.0-preview.1; Unity validation pending).
+- Closed paths already exist in v0.7.12 and must be regression-tested alongside the new editable handles.
+- Variable path width and pressure/opacity curves remain pending.
 - Multi-target authoring and batch mask export.
 - Object/vegetation scatter placement.
 - Region/flood-fill respecting mesh connectivity and UV islands.
@@ -54,7 +56,7 @@ This backlog separates source features from validated release status. A feature 
 - Smooth is still UV-neighbourhood based, not island-aware.
 - No automatic gutter dilation/mip-bleed correction.
 - One target at a time.
-- Spline width is constant; no closed paths or editable tangent handles.
+- Spline width is constant; editable anchor/tangent handles are now in the v0.8.0-preview.1 source patch and require Unity validation. Closed paths are already supported by the existing Close Path toggle.
 - Applying a path modifies the active mask page. The path asset stores the recipe, not a separate non-destructive layer.
 - Full profile-driven URP multi-layer rendering is not implemented yet.
 - Full UV raster geometry is drawn for each stamp; large meshes may be slow.

@@ -10,14 +10,36 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
     {
         [SerializeField] private Vector3 localPosition;
         [SerializeField] private Vector3 localNormal;
+        // Tangents are offsets from LocalPosition, stored in target-local space.
+        // Old path assets deserialize these fields as zero with hasCustomTangents=false,
+        // so they continue using automatic Catmull-Rom-equivalent tangents.
+        [SerializeField] private Vector3 localInTangent;
+        [SerializeField] private Vector3 localOutTangent;
+        [SerializeField] private bool hasCustomTangents;
 
         public Vector3 LocalPosition => localPosition;
         public Vector3 LocalNormal => localNormal;
+        public Vector3 LocalInTangent => localInTangent;
+        public Vector3 LocalOutTangent => localOutTangent;
+        public bool HasCustomTangents => hasCustomTangents;
 
         public SurfacePaintPathPoint(Vector3 position, Vector3 normal)
+            : this(position, normal, Vector3.zero, Vector3.zero, false)
+        {
+        }
+
+        public SurfacePaintPathPoint(
+            Vector3 position,
+            Vector3 normal,
+            Vector3 inTangent,
+            Vector3 outTangent,
+            bool useCustomTangents)
         {
             localPosition = position;
             localNormal = normal.sqrMagnitude > 0.000001f ? normal.normalized : Vector3.up;
+            localInTangent = inTangent;
+            localOutTangent = outTangent;
+            hasCustomTangents = useCustomTangents;
         }
     }
 

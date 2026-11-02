@@ -53,7 +53,7 @@ Shader "HemanthGameDev/SurfaceWeaver/URP Layered Surface"
             #pragma fragment Frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
-            #pragma multi_compile _ _ADDITIONAL_LIGHTS
+            #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
@@ -94,6 +94,9 @@ Shader "HemanthGameDev/SurfaceWeaver/URP Layered Surface"
                 float3 positionWS : TEXCOORD1;
                 half3 normalWS : TEXCOORD2;
                 half fogFactor : TEXCOORD3;
+                // URP can evaluate additional lights per vertex on mobile-oriented assets.
+                // This interpolated contribution avoids a per-fragment additional-light loop.
+                half3 vertexLighting : TEXCOORD4;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
@@ -112,6 +115,13 @@ Shader "HemanthGameDev/SurfaceWeaver/URP Layered Surface"
                 output.normalWS = NormalizeNormalPerVertex(normalInputs.normalWS);
                 output.uv = input.uv;
                 output.fogFactor = ComputeFogFactor(output.positionCS.z);
+
+                #if defined(_ADDITIONAL_LIGHTS_VERTEX)
+                    output.vertexLighting = VertexLighting(positionInputs.positionWS, output.normalWS);
+                #else
+                    output.vertexLighting = half3(0.0h, 0.0h, 0.0h);
+                #endif
+
                 return output;
             }
 
@@ -138,7 +148,9 @@ Shader "HemanthGameDev/SurfaceWeaver/URP Layered Surface"
                 half3 albedo = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, mappingCoords * _BaseTiling.xy).rgb * _BaseTint.rgb;
 
                 // One packed RGBA mask sample feeds all four overlay layers.
-                half4 packedMasks = SAMPLE_TEXTURE2D(_MaskPage0, sampler_MaskPage0, input.uv);
+                // Mask pages intentionally sample mip level zero to avoid cross-island mask
+                // averaging in automatically generated mip chains. Albedo maps retain normal mip sampling.
+                half4 packedMasks = SAMPLE_TEXTURE2D_LOD(_MaskPage0, sampler_MaskPage0, input.uv, 0.0);
 
                 if (_LayerCount > 0.5 && _Layer0Params.w > 0.5)
                 {
@@ -172,7 +184,12 @@ Shader "HemanthGameDev/SurfaceWeaver/URP Layered Surface"
                 half3 lighting = SampleSH(normalWS);
                 lighting += mainLight.color * (ndotl * mainLight.distanceAttenuation * mainLight.shadowAttenuation);
 
-                #if defined(_ADDITIONAL_LIGHTS)
+                #if defined(_ADDITIONAL_LIGHTS_VERTEX)
+                    // Mobile-friendly path: additional lights were evaluated once per vertex.
+                    // This path is cheaper per pixel but does not include additional-light shadows.
+                    lighting += input.vertexLighting;
+                #elif defined(_ADDITIONAL_LIGHTS)
+                    // Full-quality path: evaluate additional lights per fragment, including shadows.
                     uint additionalLightsCount = GetAdditionalLightsCount();
                     for (uint lightIndex = 0u; lightIndex < additionalLightsCount; ++lightIndex)
                     {

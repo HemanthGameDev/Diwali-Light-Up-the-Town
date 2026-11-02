@@ -180,22 +180,83 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             return true;
         }
 
+        /// <summary>
+        /// Applies the SurfaceWeaver packed-mask import contract. Mask pages are sampled at
+        /// mip level zero by the layered shader and are imported without generated mipmaps,
+        /// preventing lower mip levels from blending values across neighboring UV islands.
+        /// </summary>
         public static void ConfigureMaskImporter(string assetPath)
         {
             TextureImporter importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
             if (importer == null)
                 return;
 
+            ApplyBleedSafeImporterSettings(importer);
+            importer.SaveAndReimport();
+        }
+
+        /// <summary>
+        /// Migrates an existing mask page to bleed-safe importer settings without changing
+        /// its pixel data or its asset path/GUID.
+        /// </summary>
+        public static bool ApplyBleedSafeSettings(
+            Texture2D maskAsset,
+            out Texture2D refreshedAsset,
+            out string error)
+        {
+            refreshedAsset = maskAsset;
+            error = string.Empty;
+            if (maskAsset == null)
+            {
+                error = "Select or load a mask page before applying bleed-safe import settings.";
+                return false;
+            }
+
+            string assetPath = AssetDatabase.GetAssetPath(maskAsset);
+            if (string.IsNullOrEmpty(assetPath) || !assetPath.StartsWith("Assets/", System.StringComparison.Ordinal))
+            {
+                error = "The selected mask page must be a project Texture2D asset inside the Assets folder.";
+                return false;
+            }
+
+            TextureImporter importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+            if (importer == null)
+            {
+                error = "The selected mask page does not have a TextureImporter. Choose a PNG or another imported texture asset.";
+                return false;
+            }
+
+            try
+            {
+                ApplyBleedSafeImporterSettings(importer);
+                importer.SaveAndReimport();
+                refreshedAsset = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
+                if (refreshedAsset == null)
+                {
+                    error = "The importer settings were changed, but Unity could not reload the mask page.";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (System.Exception exception)
+            {
+                error = "Could not apply bleed-safe mask import settings: " + exception.Message;
+                return false;
+            }
+        }
+
+        private static void ApplyBleedSafeImporterSettings(TextureImporter importer)
+        {
             importer.textureType = TextureImporterType.Default;
             importer.sRGBTexture = false;
             importer.alphaIsTransparency = false;
             importer.isReadable = false;
             importer.maxTextureSize = 8192;
-            importer.mipmapEnabled = true;
+            importer.mipmapEnabled = false;
             importer.wrapMode = TextureWrapMode.Clamp;
             importer.filterMode = FilterMode.Bilinear;
             importer.textureCompression = TextureImporterCompression.Uncompressed;
-            importer.SaveAndReimport();
         }
 
         private static string AssetPathToAbsolutePath(string assetPath)
