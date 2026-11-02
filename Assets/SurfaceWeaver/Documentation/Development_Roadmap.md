@@ -27,6 +27,15 @@ This roadmap distinguishes source implementation from validated release status. 
 - Flood Fill is UV0 chart-constrained texture-space connectivity, not geodesic mesh-surface flood fill. Stacked/overlapping UV charts sharing texels remain ambiguous; large masks require memory testing.
 
 ## v0.9 — Quality and optimization
+
+### Preview.1 — Automated EditMode test foundation (prepared; Unity run pending)
+- Added a dedicated Editor Test Framework assembly.
+- Added tests for Flood Fill channel/tolerance/connectivity/region behavior and invalid inputs.
+- Added tests for UV-island separation across a UV seam.
+- Added tests for Multi-Mesh target-set add/remove/clear semantics.
+- Added tests for spline path point width/pressure data and clamping.
+- Remaining work: run tests in Unity, add integration tests for Undo/Redo and AssetDatabase persistence, then expand compatibility and performance suites.
+
 - Unity EditMode automated tests for geometry/UV diagnostics, channel preservation, Undo/Redo and asset persistence.
 - Graphics API compatibility: Direct3D 11/12, Vulkan and Metal where available; Android OpenGLES3 testing.
 - Unity/URP compatibility matrix and clean-import validation.

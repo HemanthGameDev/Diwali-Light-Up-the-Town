@@ -1,3 +1,10 @@
+# Changelog
+
+## v0.9.0-preview.1
+- Added Unity EditMode regression test assembly for Flood Fill, UV island chart building, Multi-Mesh target set data, and spline path profile data.
+- Added v0.9 test coverage matrix and manual integration plan.
+- Unity compilation/test execution remains pending in the consuming project.
+
 # SurfaceWeaver Changelog
 
 ## v0.8.0-preview.5.1 — Continuous cross-target painting
