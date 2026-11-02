@@ -12,10 +12,13 @@ This roadmap reflects the product plan confirmed by the developer.
 - Mobile shader optimization.
 
 ## v0.8 — Advanced authoring
-- Editable spline anchors and Bézier tangent handles (preview source added in v0.8.0-preview.1).
+- Editable spline anchors and Bézier tangent handles (preview.1 source; developer-reported working in Unity).
+- Multi-mesh path authoring and per-anchor surface binding (deferred; current preview intentionally remains single-target).
 - Closed paths (already supported by the v0.7.12 path authoring toggle; retain and regression-test).
-- Variable path width and pressure.
-- Multi-mesh editing and batch export.
+- Reliable single-target anchor selection and editable Bézier tangents (current hotfix; validate in Unity).
+- Variable path width and pressure (preview.3 source; developer-reported working in Unity).
+- Live, non-destructive spline preview while editing width/pressure, with Commit/Cancel and one-step Undo (preview.3.1 source; Unity validation pending).
+- Multi-mesh authoring and cross-target mask painting, plus batch export.
 - Object and vegetation scatter placement.
 - Flood Fill and additional surface tools.
 

@@ -55,6 +55,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         public bool IsInitialized => initialized && readTexture != null;
         public bool CanUndo => undoHistory.Count > 0;
         public bool CanRedo => redoHistory.Count > 0;
+        public bool HasPendingStrokeChanges => pendingStrokeSnapshot != null && pendingStrokeStampCount > 0;
         public int UndoCount => undoHistory.Count;
         public int RedoCount => redoHistory.Count;
         public long HistoryMemoryBytes =>
@@ -108,6 +109,27 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             pendingStrokeSnapshot = null;
             pendingStrokeStampCount = 0;
             TrimHistoryToBudget();
+        }
+
+        /// <summary>
+        /// Restores the current mask to the pending stroke's original snapshot without releasing
+        /// that snapshot. This supports non-destructive live previews that can be rebuilt many
+        /// times and still commit as a single Undo step.
+        /// </summary>
+        public bool ResetPendingStrokePreview(out string error)
+        {
+            error = string.Empty;
+            if (!IsInitialized || pendingStrokeSnapshot == null)
+            {
+                error = "There is no active preview stroke to rebuild.";
+                return false;
+            }
+
+            if (!RestoreSnapshot(pendingStrokeSnapshot, out error))
+                return false;
+
+            pendingStrokeStampCount = 0;
+            return true;
         }
 
         /// <summary>Restores the page to its state before the active stroke.</summary>

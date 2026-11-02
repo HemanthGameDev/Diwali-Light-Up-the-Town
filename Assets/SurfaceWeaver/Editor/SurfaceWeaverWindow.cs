@@ -86,6 +86,14 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private int selectedPathPointIndex = -1;
         private string pathStatus = "Click the target mesh in Scene View to add spline anchors.";
         private int pathRandomSeed = 1;
+        private bool pathPressureAffectsWidth = true;
+        private bool pathPressureAffectsOpacity = true;
+        private bool showPathWidthPreview = true;
+        // A live spline preview keeps one pre-preview mask snapshot pending so profile edits
+        // can rebuild the visible result without stacking repeated stamps or Undo entries.
+        private bool splinePreviewActive;
+        private bool splinePreviewRebuildQueued;
+        private bool hasUnsavedChangesBeforeSplinePreview;
 
         [MenuItem("Window/SurfaceWeaver/Painter", false, 2100)]
         public static void OpenWindow()
@@ -119,6 +127,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void OnDisable()
         {
+            CommitSplinePreview("Committed live spline preview when the Painter window closed.");
+            EditorApplication.delayCall -= ProcessQueuedSplinePreviewRebuild;
+            splinePreviewRebuildQueued = false;
             SceneView.duringSceneGui -= OnSceneGUI;
             StopStroke();
             RestorePreviewMaterial();
@@ -179,6 +190,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (target == value)
                 return;
 
+            CommitSplinePreview("Committed the active spline preview before changing targets.");
             StopStroke();
             RestorePreviewMaterial();
             DisposePaintSession();
@@ -303,7 +315,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 previewColor = EditorGUILayout.ColorField("Preview Color", previewColor);
             }
             if (EditorGUI.EndChangeCheck())
+            {
+                QueueSplinePreviewRebuild();
                 SceneView.RepaintAll();
+            }
 
             using (new EditorGUI.DisabledScope(target == null))
             {
@@ -486,7 +501,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 layerNames[i] = item != null ? item.DisplayName : "Missing Layer " + i;
             }
             selectedLayerIndex = Mathf.Clamp(selectedLayerIndex, 0, layerNames.Length - 1);
+            int previousLayerIndex = selectedLayerIndex;
             selectedLayerIndex = EditorGUILayout.Popup("Paint Layer", selectedLayerIndex, layerNames);
+            if (selectedLayerIndex != previousLayerIndex)
+                CommitSplinePreview("Committed the live spline preview before changing paint layers.");
 
             SurfaceLayerDefinition layer = profile.PaintLayers[selectedLayerIndex];
             if (layer == null)
@@ -579,7 +597,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 }
             }
             if (brushFieldsChanged)
+            {
+                QueueSplinePreviewRebuild();
                 SceneView.RepaintAll();
+            }
 
             undoMemoryBudgetMb = EditorGUILayout.IntSlider(
                 "Undo Memory Budget (MB)", undoMemoryBudgetMb, 16, 256);
@@ -658,12 +679,12 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    using (new EditorGUI.DisabledScope(!gpuEngine.CanUndo || isPainting))
+                    using (new EditorGUI.DisabledScope((!gpuEngine.CanUndo && !splinePreviewActive) || isPainting))
                     {
-                        if (GUILayout.Button("Undo"))
+                        if (GUILayout.Button(splinePreviewActive ? "Cancel Preview (Undo)" : "Undo"))
                             UndoPaintStroke();
                     }
-                    using (new EditorGUI.DisabledScope(!gpuEngine.CanRedo || isPainting))
+                    using (new EditorGUI.DisabledScope(!gpuEngine.CanRedo || isPainting || splinePreviewActive))
                     {
                         if (GUILayout.Button("Redo"))
                             RedoPaintStroke();
@@ -717,6 +738,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "Enable Path Authoring (click the mesh to add anchors)", pathAuthoringEnabled);
             if (newPathMode != pathAuthoringEnabled)
             {
+                if (!newPathMode)
+                    CommitSplinePreview("Committed the live spline preview when leaving Path Authoring.");
                 StopStroke();
                 pathAuthoringEnabled = newPathMode;
                 hasPreviousPaintHit = false;
@@ -729,10 +752,65 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "Selected Anchor",
                 selectedPathPointIndex >= 0 && selectedPathPointIndex < pathPoints.Count
                     ? "P" + (selectedPathPointIndex + 1)
-                    : "None (click an anchor in Scene View)");
+                    : "None (click an anchor in Scene View or choose below)");
+
+            // The dropdown is a reliable fallback for selecting older anchors when Scene View
+            // handles overlap or are difficult to click. It does not change the active paint target.
+            if (pathPoints.Count > 0)
+            {
+                string[] anchorOptions = new string[pathPoints.Count + 1];
+                anchorOptions[0] = "None";
+                for (int i = 0; i < pathPoints.Count; i++)
+                    anchorOptions[i + 1] = "P" + (i + 1);
+
+                int currentAnchorOption = Mathf.Clamp(selectedPathPointIndex + 1, 0, anchorOptions.Length - 1);
+                EditorGUI.BeginChangeCheck();
+                int selectedAnchorOption = EditorGUILayout.Popup(
+                    "Edit Anchor", currentAnchorOption, anchorOptions);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    selectedPathPointIndex = selectedAnchorOption - 1;
+                    pathStatus = selectedPathPointIndex >= 0
+                        ? "Selected anchor P" + (selectedPathPointIndex + 1) + ". Drag its center to move it or edit its tangent handles."
+                        : "Anchor selection cleared.";
+                    Repaint();
+                    SceneView.RepaintAll();
+                }
+            }
+
+            if (selectedPathPointIndex >= 0 && selectedPathPointIndex < pathPoints.Count)
+            {
+                EditorGUILayout.Space(3f);
+                EditorGUILayout.LabelField("Selected Anchor Profile", EditorStyles.boldLabel);
+                SurfacePaintPathPoint selectedPoint = pathPoints[selectedPathPointIndex];
+                EditorGUI.BeginChangeCheck();
+                float editedWidthScale = EditorGUILayout.Slider(
+                    "Width Scale", selectedPoint.WidthScale, 0.05f, 4f);
+                float editedPressure = EditorGUILayout.Slider(
+                    "Pressure", selectedPoint.Pressure, 0f, 1f);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    SetPathPointDynamics(selectedPathPointIndex, editedWidthScale, editedPressure);
+                }
+                EditorGUILayout.HelpBox(
+                    "Width Scale changes the brush radius along the path. Pressure can optionally control width and opacity below. " +
+                    "Values are interpolated smoothly between anchors.", MessageType.None);
+            }
+
+            EditorGUILayout.LabelField("Path Profile", EditorStyles.boldLabel);
+            EditorGUI.BeginChangeCheck();
+            showPathWidthPreview = EditorGUILayout.Toggle("Show Width Preview", showPathWidthPreview);
+            pathPressureAffectsWidth = EditorGUILayout.Toggle("Pressure Affects Width", pathPressureAffectsWidth);
+            pathPressureAffectsOpacity = EditorGUILayout.Toggle("Pressure Affects Opacity", pathPressureAffectsOpacity);
             closeSplinePath = EditorGUILayout.ToggleLeft("Close Path (connect last anchor to first)", closeSplinePath);
             randomizeSplineStamps = EditorGUILayout.ToggleLeft(
                 "Randomize brush rotation / size per path stamp", randomizeSplineStamps);
+            if (EditorGUI.EndChangeCheck())
+            {
+                QueueSplinePreviewRebuild();
+                Repaint();
+                SceneView.RepaintAll();
+            }
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -740,6 +818,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 {
                     if (GUILayout.Button("Reset Selected Handles"))
                         ResetPathTangents(selectedPathPointIndex);
+                    if (GUILayout.Button("Reset Width / Pressure"))
+                        SetPathPointDynamics(selectedPathPointIndex, 1f, 1f);
                     if (GUILayout.Button("Deselect Anchor"))
                     {
                         selectedPathPointIndex = -1;
@@ -755,10 +835,16 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     if (GUILayout.Button("Reset All Handles"))
                         ResetAllPathTangents();
                 }
+                using (new EditorGUI.DisabledScope(!HasAnyCustomPathDynamics()))
+                {
+                    if (GUILayout.Button("Reset All Profiles"))
+                        ResetAllPathDynamics();
+                }
                 using (new EditorGUI.DisabledScope(pathPoints.Count == 0))
                 {
                     if (GUILayout.Button("Clear Anchors"))
                     {
+                        CommitSplinePreview("Committed the live spline preview before clearing anchors.");
                         pathPoints.Clear();
                         selectedPathPointIndex = -1;
                         pathRandomSeed = UnityEngine.Random.Range(1, int.MaxValue);
@@ -788,9 +874,30 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 {
                     if (GUILayout.Button("Save Path Asset"))
                         SavePathAsset();
-                    if (GUILayout.Button("Apply Spline"))
-                        ApplySplinePath();
+                    if (!splinePreviewActive)
+                    {
+                        if (GUILayout.Button("Apply Spline Preview"))
+                            ApplySplinePath();
+                    }
+                    else
+                    {
+                        if (GUILayout.Button("Commit Preview"))
+                            CommitSplinePreview();
+                    }
                 }
+            }
+
+            if (splinePreviewActive)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.HelpBox(
+                        "Live preview is active. Width, pressure, path shape and brush setting changes rebuild the mask preview immediately. " +
+                        "Commit keeps the result as one Undo step; Cancel restores the mask to its pre-preview state.",
+                        MessageType.Info);
+                }
+                if (GUILayout.Button("Cancel Preview"))
+                    CancelSplinePreview();
             }
 
             EditorGUILayout.LabelField("Path Status", pathStatus);
@@ -798,7 +905,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "Click the target mesh to add anchors. Click an anchor to select it, then drag its center to move it on the target. " +
                 "The selected anchor displays incoming/outgoing tangent handles; drag them to reshape the Bézier curve. " +
                 "Reset Selected Handles restores automatic tangents. Backspace removes the selected anchor (or the last anchor when none is selected); Delete removes the selected anchor. " +
-                "Closed-path behavior and reusable path assets are preserved. Applying paints the active mask page as one Undo step.",
+                "Each anchor has Width Scale and Pressure values. The width rails preview the resulting brush radius; pressure can independently affect width and opacity. " +
+                "Apply Spline Preview paints a live, editable preview: profile and path changes rebuild it against the original mask. Commit keeps the result as one Undo step; Cancel restores the original mask. " +
+                "Closed-path behavior and reusable path assets are preserved.",
                 MessageType.Info);
         }
 
@@ -812,14 +921,55 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             return false;
         }
 
+        private bool HasAnyCustomPathDynamics()
+        {
+            for (int i = 0; i < pathPoints.Count; i++)
+            {
+                if (pathPoints[i].HasCustomWidthPressure &&
+                    (!Mathf.Approximately(pathPoints[i].WidthScale, 1f) ||
+                     !Mathf.Approximately(pathPoints[i].Pressure, 1f)))
+                    return true;
+            }
+            return false;
+        }
+
+        private void SetPathPointDynamics(int index, float widthScale, float pressure)
+        {
+            if (index < 0 || index >= pathPoints.Count)
+                return;
+
+            SurfacePaintPathPoint point = pathPoints[index];
+            pathPoints[index] = new SurfacePaintPathPoint(
+                point.LocalPosition, point.LocalNormal,
+                point.LocalInTangent, point.LocalOutTangent, point.HasCustomTangents,
+                widthScale, pressure, true);
+            pathStatus = "Updated width/pressure profile for anchor P" + (index + 1) + ".";
+            QueueSplinePreviewRebuild();
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void ResetAllPathDynamics()
+        {
+            for (int i = 0; i < pathPoints.Count; i++)
+                SetPathPointDynamics(i, 1f, 1f);
+            pathStatus = "Reset width/pressure profiles for all anchors.";
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
         private void ResetPathTangents(int index)
         {
             if (index < 0 || index >= pathPoints.Count)
                 return;
 
             SurfacePaintPathPoint point = pathPoints[index];
-            pathPoints[index] = new SurfacePaintPathPoint(point.LocalPosition, point.LocalNormal);
+            pathPoints[index] = new SurfacePaintPathPoint(
+                point.LocalPosition, point.LocalNormal,
+                Vector3.zero, Vector3.zero, false,
+                point.WidthScale, point.Pressure, point.HasCustomWidthPressure);
             pathStatus = "Restored automatic tangents for anchor P" + (index + 1) + ".";
+            QueueSplinePreviewRebuild();
             Repaint();
             SceneView.RepaintAll();
         }
@@ -829,9 +979,13 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             for (int i = 0; i < pathPoints.Count; i++)
             {
                 SurfacePaintPathPoint point = pathPoints[i];
-                pathPoints[i] = new SurfacePaintPathPoint(point.LocalPosition, point.LocalNormal);
+                pathPoints[i] = new SurfacePaintPathPoint(
+                    point.LocalPosition, point.LocalNormal,
+                    Vector3.zero, Vector3.zero, false,
+                    point.WidthScale, point.Pressure, point.HasCustomWidthPressure);
             }
             pathStatus = "Restored automatic tangents for all path anchors.";
+            QueueSplinePreviewRebuild();
             Repaint();
             SceneView.RepaintAll();
         }
@@ -844,9 +998,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             Vector3 localPosition = target.transform.InverseTransformPoint(hit.Point);
             Vector3 localNormal = localToWorld.transpose.MultiplyVector(hit.Normal).normalized;
-            pathPoints.Add(new SurfacePaintPathPoint(localPosition, localNormal));
+            pathPoints.Add(new SurfacePaintPathPoint(
+                localPosition, localNormal, Vector3.zero, Vector3.zero, false, 1f, 1f, true));
             selectedPathPointIndex = pathPoints.Count - 1;
             pathStatus = "Added anchor " + pathPoints.Count + ". Select it to edit its position or tangent handles.";
+            QueueSplinePreviewRebuild();
             SceneView.RepaintAll();
             Repaint();
         }
@@ -900,7 +1056,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 brushScaleJitter,
                 closeSplinePath,
                 randomizeSplineStamps,
-                pathRandomSeed);
+                pathRandomSeed,
+                pathPressureAffectsWidth,
+                pathPressureAffectsOpacity);
 
             assetPath = AssetDatabase.GenerateUniqueAssetPath(assetPath);
             AssetDatabase.CreateAsset(created, assetPath);
@@ -915,6 +1073,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             SurfacePaintPathAsset source = pathAsset;
             if (source == null)
                 return;
+
+            CommitSplinePreview("Committed the previous live preview before loading another path asset.");
 
             SurfacePaintTarget resolvedTarget = null;
             if (!string.IsNullOrEmpty(source.TargetGlobalObjectId) &&
@@ -983,6 +1143,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             closeSplinePath = source.ClosedLoop;
             randomizeSplineStamps = source.RandomizePerStamp;
             pathRandomSeed = source.RandomSeed;
+            pathPressureAffectsWidth = source.PressureAffectsWidth;
+            pathPressureAffectsOpacity = source.PressureAffectsOpacity;
             operationToolbar = source.Smooth ? 2 : (source.Erase ? 1 : 0);
             pathAuthoringEnabled = true;
             pathStatus = !matchedLayer
@@ -996,6 +1158,12 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void ApplySplinePath()
         {
+            if (splinePreviewActive)
+            {
+                CommitSplinePreview();
+                return;
+            }
+
             SurfaceLayerDefinition layer = GetSelectedLayer();
             if (target == null || layer == null || !layer.Enabled ||
                 !IsSessionForLayer(layer) || pathPoints.Count < 2)
@@ -1022,7 +1190,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             StopStroke();
             gpuEngine.SetHistoryBudgetMegabytes(undoMemoryBudgetMb);
-            hasUnsavedChangesBeforeStroke = hasUnsavedChanges;
+            hasUnsavedChangesBeforeSplinePreview = hasUnsavedChanges;
             if (!gpuEngine.BeginStroke(out string beginError))
             {
                 pathStatus = beginError;
@@ -1030,20 +1198,73 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 return;
             }
 
-            bool anyStamp = false;
+            if (!StampSplinePathSamples(out bool anyProjectedHit, out string failure))
+            {
+                gpuEngine.CancelStroke(out string cancelError);
+                pathStatus = failure;
+                if (!string.IsNullOrEmpty(cancelError))
+                    pathStatus += " Undo restore: " + cancelError;
+                Repaint();
+                SceneView.RepaintAll();
+                return;
+            }
+
+            // Keep the pre-preview snapshot pending. Parameter edits restore this baseline
+            // and stamp the updated path, keeping the whole edit as one logical Undo step.
+            splinePreviewActive = true;
+            hasUnsavedChanges = true;
+            BindWorkingMaskPreview();
+            pathStatus = anyProjectedHit
+                ? "Live spline preview active. Adjust width, pressure or path shape to see changes immediately. Commit Preview to keep it as one Undo step, or Cancel Preview to restore the original mask."
+                : "Live spline preview active, but the current pressure profile is fully transparent. Adjust pressure, opacity settings or width to inspect the result. Commit or Cancel when ready.";
+            paintStatus = pathStatus;
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        /// <summary>Stamps the current spline profile into the active GPU mask without opening/closing a history stroke.</summary>
+        private bool StampSplinePathSamples(out bool anyProjectedHit, out string failure)
+        {
+            anyProjectedHit = false;
+            failure = string.Empty;
+
+            SurfaceLayerDefinition layer = GetSelectedLayer();
+            if (target == null || layer == null || !layer.Enabled ||
+                !IsSessionForLayer(layer) || pathPoints.Count < 2)
+            {
+                failure = "The spline preview needs an enabled layer, an active mask page and at least two anchors.";
+                return false;
+            }
+
+            MeshCollider collider = target.GetComponent<MeshCollider>();
+            if (collider == null || collider.convex || collider.sharedMesh == null)
+            {
+                failure = "A non-convex MeshCollider using the target mesh is required to preview spline paths.";
+                return false;
+            }
+
             bool failed = false;
-            string failure = string.Empty;
-            float minimumJitteredRadius = brushRadius * (1f - (randomizeSplineStamps ? brushScaleJitter : 0f));
-            float spacingDistance = Mathf.Max(0.025f, minimumJitteredRadius * 2f * brushSpacing);
             UnityEngine.Random.State previousRandomState = UnityEngine.Random.state;
             UnityEngine.Random.InitState(pathRandomSeed);
-
             int segmentCount = closeSplinePath ? pathPoints.Count : pathPoints.Count - 1;
             try
             {
                 for (int segment = 0; segment < segmentCount && !failed; segment++)
                 {
-                    int next = (segment + 1) % pathPoints.Count;
+                    float minimumProfileRadius = float.PositiveInfinity;
+                    const int profileSpacingSamples = 24;
+                    for (int profileSample = 0; profileSample <= profileSpacingSamples; profileSample++)
+                    {
+                        float profileT = profileSample / (float)profileSpacingSamples;
+                        minimumProfileRadius = Mathf.Min(minimumProfileRadius,
+                            GetPathSampleRadius(segment, profileT, closeSplinePath));
+                    }
+                    if (float.IsInfinity(minimumProfileRadius) || minimumProfileRadius <= 0f)
+                        minimumProfileRadius = Mathf.Max(0.01f, brushRadius);
+
+                    float minimumJitteredRadius = minimumProfileRadius *
+                        (1f - (randomizeSplineStamps ? brushScaleJitter : 0f));
+                    float spacingDistance = Mathf.Max(0.01f, minimumJitteredRadius * 2f * brushSpacing);
                     float worldSegmentLength = EstimatePathSegmentLength(segment, closeSplinePath);
                     int steps = Mathf.Clamp(
                         Mathf.CeilToInt(worldSegmentLength / spacingDistance * 1.5f), 1, 4096);
@@ -1059,20 +1280,30 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                         if (!TryProjectPathHit(collider, worldPosition, worldNormal, out RaycastHit projectedHit))
                             continue;
 
+                        anyProjectedHit = true;
+                        float widthScale = EvaluatePathWidthScale(segment, t, closeSplinePath);
+                        float pressure = EvaluatePathPressure(segment, t, closeSplinePath);
+                        float radiusMultiplier = widthScale *
+                            (pathPressureAffectsWidth ? pressure : 1f);
+                        float opacityMultiplier = pathPressureAffectsOpacity ? pressure : 1f;
+                        if (opacityMultiplier <= 0.0001f)
+                            continue;
+
                         bool stampSucceeded;
                         if (seamAwareProjection)
                         {
                             stampSucceeded = StampSurfaceWorld(
                                 projectedHit.point, projectedHit.normal, layer,
                                 operationToolbar == 1, operationToolbar == 2, GetActiveBrushAlpha(),
-                                randomizeSplineStamps, out failure);
+                                randomizeSplineStamps, out failure,
+                                radiusMultiplier, opacityMultiplier);
                         }
                         else
                         {
                             stampSucceeded = StampLegacyPathHit(
                                 projectedHit, collider, layer, operationToolbar == 1,
                                 operationToolbar == 2, GetActiveBrushAlpha(),
-                                randomizeSplineStamps, out failure);
+                                randomizeSplineStamps, radiusMultiplier, opacityMultiplier, out failure);
                         }
 
                         if (!stampSucceeded)
@@ -1080,38 +1311,137 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                             failed = true;
                             break;
                         }
-                        anyStamp = true;
                     }
                 }
             }
             catch (Exception exception)
             {
                 failed = true;
-                failure = "Spline application failed: " + exception.Message;
+                failure = "Spline preview failed: " + exception.Message;
             }
             finally
             {
                 UnityEngine.Random.state = previousRandomState;
             }
 
-            if (failed || !anyStamp)
+            if (failed)
+                return false;
+
+            if (!anyProjectedHit)
+            {
+                failure = "No spline samples could be projected. Check that the anchors lie on the collider and the path does not cross a gap.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private void QueueSplinePreviewRebuild()
+        {
+            if (!splinePreviewActive || splinePreviewRebuildQueued)
+                return;
+
+            splinePreviewRebuildQueued = true;
+            EditorApplication.delayCall += ProcessQueuedSplinePreviewRebuild;
+        }
+
+        private void ProcessQueuedSplinePreviewRebuild()
+        {
+            EditorApplication.delayCall -= ProcessQueuedSplinePreviewRebuild;
+            splinePreviewRebuildQueued = false;
+            if (this == null || !splinePreviewActive)
+                return;
+
+            RefreshLiveSplinePreview();
+        }
+
+        private void RefreshLiveSplinePreview()
+        {
+            if (!splinePreviewActive || gpuEngine == null || !gpuEngine.IsInitialized)
+                return;
+
+            if (!gpuEngine.ResetPendingStrokePreview(out string resetError))
+            {
+                CancelSplinePreview();
+                pathStatus = "Could not refresh the live preview: " + resetError;
+                paintStatus = pathStatus;
+                Repaint();
+                return;
+            }
+
+            if (!StampSplinePathSamples(out bool anyProjectedHit, out string failure))
             {
                 gpuEngine.CancelStroke(out string cancelError);
-                pathStatus = failed ? failure :
-                    "No spline samples could be projected. Check that the anchors lie on the collider and the path does not cross a gap.";
+                splinePreviewActive = false;
+                hasUnsavedChanges = hasUnsavedChangesBeforeSplinePreview;
                 if (!string.IsNullOrEmpty(cancelError))
-                    pathStatus += " Undo restore: " + cancelError;
+                    failure += " Undo restore: " + cancelError;
+                pathStatus = "Live preview was cancelled because the updated path could not be stamped. " + failure;
+                BindWorkingMaskPreview();
                 Repaint();
                 SceneView.RepaintAll();
                 return;
             }
 
-            gpuEngine.EndStroke();
             hasUnsavedChanges = true;
             BindWorkingMaskPreview();
-            pathStatus = seamAwareProjection
-                ? "Spline applied using seam-aware world projection as one Undo step. Save the mask page to persist the result."
-                : "Spline applied using legacy UV projection as one Undo step. UV seam gaps are possible. Save the mask page to persist the result.";
+            pathStatus = anyProjectedHit
+                ? "Live preview updated. Commit Preview to keep the latest settings as one Undo step, or Cancel Preview to restore the original mask."
+                : "Live preview updated with no projected samples.";
+            paintStatus = pathStatus;
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void CommitSplinePreview(string message = null)
+        {
+            if (!splinePreviewActive)
+                return;
+
+            // A slider/handle may have queued a rebuild immediately before the user
+            // commits or saves. Process it synchronously so the committed mask always
+            // contains the latest displayed profile values.
+            if (splinePreviewRebuildQueued)
+                ProcessQueuedSplinePreviewRebuild();
+            if (!splinePreviewActive)
+                return;
+
+            bool previewChangedMask = gpuEngine != null && gpuEngine.IsInitialized &&
+                                      gpuEngine.HasPendingStrokeChanges;
+            if (gpuEngine != null && gpuEngine.IsInitialized)
+                gpuEngine.EndStroke();
+            if (!previewChangedMask)
+                hasUnsavedChanges = hasUnsavedChangesBeforeSplinePreview;
+
+            splinePreviewActive = false;
+            splinePreviewRebuildQueued = false;
+            EditorApplication.delayCall -= ProcessQueuedSplinePreviewRebuild;
+            if (!string.IsNullOrEmpty(message))
+                pathStatus = message;
+            else
+                pathStatus = "Live spline preview committed as one Undo step. Save the mask page to persist the result.";
+            paintStatus = pathStatus;
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void CancelSplinePreview()
+        {
+            if (!splinePreviewActive)
+                return;
+
+            string error = string.Empty;
+            bool restored = gpuEngine != null && gpuEngine.IsInitialized && gpuEngine.CancelStroke(out error);
+            splinePreviewActive = false;
+            splinePreviewRebuildQueued = false;
+            EditorApplication.delayCall -= ProcessQueuedSplinePreviewRebuild;
+            hasUnsavedChanges = restored
+                ? hasUnsavedChangesBeforeSplinePreview
+                : true;
+            BindWorkingMaskPreview();
+            pathStatus = restored
+                ? "Live spline preview cancelled. The mask has been restored to its pre-preview state."
+                : "Could not fully cancel the live spline preview. " + error;
             paintStatus = pathStatus;
             Repaint();
             SceneView.RepaintAll();
@@ -1143,6 +1473,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 Handles.color = new Color(1f, 0.68f, 0.12f, 0.95f);
                 if (line.Count >= 2)
                     Handles.DrawAAPolyLine(3f, line.ToArray());
+
+                if (showPathWidthPreview)
+                    DrawPathWidthRails(previewSegments);
             }
 
             for (int i = 0; i < pathPoints.Count; i++)
@@ -1178,7 +1511,13 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 }
 
                 if (anchorMoved)
+                {
+                    // Every anchor owns a live handle. Selecting the handle being dragged
+                    // ensures older points remain editable after new anchors are added.
+                    selectedPathPointIndex = i;
+                    pathStatus = "Moving anchor P" + (i + 1) + ".";
                     MovePathAnchorToWorld(i, movedWorld);
+                }
 
                 if (currentEvent.type == EventType.Repaint)
                     Handles.Label(world, "  P" + (i + 1));
@@ -1272,9 +1611,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             Vector3 outTangent = incomingHandle ? currentOutgoing : movedLocalOffset;
 
             pathPoints[index] = new SurfacePaintPathPoint(
-                point.LocalPosition, point.LocalNormal, inTangent, outTangent, true);
+                point.LocalPosition, point.LocalNormal, inTangent, outTangent, true,
+                point.WidthScale, point.Pressure, point.HasCustomWidthPressure);
             pathStatus = (incomingHandle ? "Edited incoming" : "Edited outgoing") +
                 " tangent for anchor P" + (index + 1) + ". Save the path asset to preserve the edit.";
+            QueueSplinePreviewRebuild();
             Repaint();
             SceneView.RepaintAll();
         }
@@ -1326,8 +1667,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             Vector3 localNormal = target.transform.localToWorldMatrix.transpose.MultiplyVector(worldNormal).normalized;
             pathPoints[index] = new SurfacePaintPathPoint(
                 localPosition, localNormal,
-                point.LocalInTangent, point.LocalOutTangent, point.HasCustomTangents);
+                point.LocalInTangent, point.LocalOutTangent, point.HasCustomTangents,
+                point.WidthScale, point.Pressure, point.HasCustomWidthPressure);
             pathStatus = "Moved anchor P" + (index + 1) + " on the target surface.";
+            QueueSplinePreviewRebuild();
             Repaint();
             SceneView.RepaintAll();
         }
@@ -1385,6 +1728,98 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             Vector3 previous = pathPoints[(index - 1 + count) % count].LocalPosition;
             Vector3 next = pathPoints[(index + 1) % count].LocalPosition;
             return (previous - next) / 6f;
+        }
+
+        private float EvaluatePathWidthScale(int segment, float t, bool closed)
+        {
+            return EvaluatePathScalarProfile(segment, t, closed, true);
+        }
+
+        private float EvaluatePathPressure(int segment, float t, bool closed)
+        {
+            return EvaluatePathScalarProfile(segment, t, closed, false);
+        }
+
+        private float EvaluatePathScalarProfile(int segment, float t, bool closed, bool width)
+        {
+            int count = pathPoints.Count;
+            if (count == 0)
+                return width ? 1f : 1f;
+            if (count == 1)
+                return width ? pathPoints[0].WidthScale : pathPoints[0].Pressure;
+
+            int i1 = Mathf.Clamp(segment, 0, count - 1);
+            int i2 = closed ? (i1 + 1) % count : Mathf.Min(i1 + 1, count - 1);
+            int i0 = closed ? (i1 - 1 + count) % count : Mathf.Max(i1 - 1, 0);
+            int i3 = closed ? (i2 + 1) % count : Mathf.Min(i2 + 1, count - 1);
+
+            float p0 = width ? pathPoints[i0].WidthScale : pathPoints[i0].Pressure;
+            float p1 = width ? pathPoints[i1].WidthScale : pathPoints[i1].Pressure;
+            float p2 = width ? pathPoints[i2].WidthScale : pathPoints[i2].Pressure;
+            float p3 = width ? pathPoints[i3].WidthScale : pathPoints[i3].Pressure;
+            float value = CatmullRomScalar(p0, p1, p2, p3, Mathf.Clamp01(t));
+            return width ? Mathf.Clamp(value, 0.05f, 4f) : Mathf.Clamp01(value);
+        }
+
+        private static float CatmullRomScalar(float p0, float p1, float p2, float p3, float t)
+        {
+            float t2 = t * t;
+            float t3 = t2 * t;
+            return 0.5f * ((2f * p1) + (-p0 + p2) * t +
+                (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 +
+                (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
+        }
+
+        private float GetPathSampleRadius(int segment, float t, bool closed)
+        {
+            float width = EvaluatePathWidthScale(segment, t, closed);
+            float pressure = EvaluatePathPressure(segment, t, closed);
+            float pressureScale = pathPressureAffectsWidth ? pressure : 1f;
+            return Mathf.Max(0.01f, brushRadius * width * pressureScale);
+        }
+
+        private void DrawPathWidthRails(int segmentCount)
+        {
+            if (target == null || pathPoints.Count < 2)
+                return;
+
+            List<Vector3> leftRail = new List<Vector3>();
+            List<Vector3> rightRail = new List<Vector3>();
+            const int samplesPerSegment = 24;
+            for (int segment = 0; segment < segmentCount; segment++)
+            {
+                int startSample = segment == 0 ? 0 : 1;
+                for (int sample = startSample; sample <= samplesPerSegment; sample++)
+                {
+                    float t = sample / (float)samplesPerSegment;
+                    Vector3 localPosition = EvaluatePathPosition(segment, t, closeSplinePath);
+                    Vector3 before = EvaluatePathPosition(segment, Mathf.Max(0f, t - 0.01f), closeSplinePath);
+                    Vector3 after = EvaluatePathPosition(segment, Mathf.Min(1f, t + 0.01f), closeSplinePath);
+                    Vector3 tangent = after - before;
+                    Vector3 normal = EvaluatePathNormal(segment, t, closeSplinePath);
+                    Vector3 side = Vector3.Cross(normal, tangent);
+                    if (side.sqrMagnitude < 0.000001f)
+                        side = Vector3.Cross(Vector3.up, tangent);
+                    if (side.sqrMagnitude < 0.000001f)
+                        side = Vector3.right;
+                    side.Normalize();
+
+                    float halfWidth = GetPathSampleRadius(segment, t, closeSplinePath);
+                    Vector3 worldCenter = target.transform.TransformPoint(localPosition);
+                    Vector3 worldSide = target.transform.TransformVector(side).normalized;
+                    float worldScale = target.transform.TransformVector(side * halfWidth).magnitude;
+                    Vector3 offset = worldSide * worldScale;
+                    leftRail.Add(worldCenter + offset);
+                    rightRail.Add(worldCenter - offset);
+                }
+            }
+
+            Handles.color = new Color(0.2f, 0.85f, 1f, 0.55f);
+            if (leftRail.Count >= 2)
+            {
+                Handles.DrawAAPolyLine(1.5f, leftRail.ToArray());
+                Handles.DrawAAPolyLine(1.5f, rightRail.ToArray());
+            }
         }
 
         private float EstimatePathSegmentLength(int segment, bool closed)
@@ -1524,7 +1959,9 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             bool smooth,
             Texture2D alpha,
             bool allowPresetRandomness,
-            out string error)
+            out string error,
+            float radiusMultiplier = 1f,
+            float opacityMultiplier = 1f)
         {
             error = string.Empty;
             if (gpuEngine == null || !gpuEngine.IsInitialized || target == null || layer == null)
@@ -1538,7 +1975,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             float rotation = brushRotation;
             if (allowPresetRandomness && brushPreset != null && brushPreset.RandomRotation)
                 rotation = UnityEngine.Random.Range(0f, 360f);
-            float stampRadius = brushRadius;
+            float stampRadius = brushRadius * Mathf.Clamp(radiusMultiplier, 0.01f, 4f);
             float effectiveJitter = allowPresetRandomness ? brushScaleJitter : 0f;
             if (effectiveJitter > 0f)
                 stampRadius *= UnityEngine.Random.Range(1f - effectiveJitter, 1f + effectiveJitter);
@@ -1552,7 +1989,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 Mathf.Max(0.001f, stampRadius * projectionDepthScale),
                 useSurfaceNormalFilter,
                 surfaceNormalCutoff,
-                brushOpacity,
+                brushOpacity * Mathf.Clamp01(opacityMultiplier),
                 brushHardness,
                 (int)layer.MaskChannel,
                 erase,
@@ -1567,6 +2004,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (gpuEngine == null || !gpuEngine.IsInitialized || layer == null)
                 return;
 
+            CommitSplinePreview("Committed the live spline preview before applying a channel fill.");
             StopStroke();
             if (!gpuEngine.BeginStroke(out string error))
             {
@@ -1671,6 +2109,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void SaveMaskPage()
         {
+            CommitSplinePreview("Committed the live spline preview before saving the mask page.");
             if (gpuEngine == null || !gpuEngine.IsInitialized ||
                 activeSessionProfile == null || activeMaskPage < 0)
             {
@@ -1838,6 +2277,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             bool smooth,
             Texture2D alpha,
             bool allowPresetRandomness,
+            float radiusMultiplier,
+            float opacityMultiplier,
             out string error)
         {
             SurfaceSceneHit sceneHit = new SurfaceSceneHit(target, collider, hit);
@@ -1848,12 +2289,13 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             float rotation = brushRotation;
             if (allowPresetRandomness && brushPreset != null && brushPreset.RandomRotation)
                 rotation = UnityEngine.Random.Range(0f, 360f);
-            float radius = brushRadius;
+            float radius = brushRadius * Mathf.Clamp(radiusMultiplier, 0.01f, 4f);
             if (allowPresetRandomness && brushScaleJitter > 0f)
                 radius *= UnityEngine.Random.Range(1f - brushScaleJitter, 1f + brushScaleJitter);
 
             return gpuEngine.Stamp(
-                sceneHit.Uv0, worldPerUvU, worldPerUvV, radius, brushOpacity, brushHardness,
+                sceneHit.Uv0, worldPerUvU, worldPerUvV, radius,
+                brushOpacity * Mathf.Clamp01(opacityMultiplier), brushHardness,
                 (int)layer.MaskChannel, erase, alpha, rotation, smooth, out error);
         }
 
@@ -1985,6 +2427,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                         pathPoints.RemoveAt(removeIndex);
                         selectedPathPointIndex = -1;
                         pathStatus = "Removed spline anchor P" + (removeIndex + 1) + ".";
+                        if (splinePreviewActive && pathPoints.Count < 2)
+                            CancelSplinePreview();
+                        else
+                            QueueSplinePreviewRebuild();
                         Repaint();
                         SceneView.RepaintAll();
                         currentEvent.Use();
@@ -2005,6 +2451,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 currentEvent.button == 0 && hitFound && CanPaint())
             {
                 string beginError;
+                CommitSplinePreview("Committed the live spline preview before starting a brush stroke.");
                 gpuEngine.SetHistoryBudgetMegabytes(undoMemoryBudgetMb);
                 hasUnsavedChangesBeforeStroke = hasUnsavedChanges;
                 if (!gpuEngine.BeginStroke(out beginError))
@@ -2145,6 +2592,11 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         {
             if (gpuEngine == null || !gpuEngine.IsInitialized)
                 return;
+            if (splinePreviewActive)
+            {
+                CancelSplinePreview();
+                return;
+            }
             StopStroke();
             if (gpuEngine.UndoLastStroke(out string error))
             {
@@ -2164,6 +2616,12 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         {
             if (gpuEngine == null || !gpuEngine.IsInitialized)
                 return;
+            if (splinePreviewActive)
+            {
+                pathStatus = "Commit or cancel the live spline preview before redoing another stroke.";
+                Repaint();
+                return;
+            }
             StopStroke();
             if (gpuEngine.RedoLastStroke(out string error))
             {
@@ -2401,6 +2859,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void DisposePaintSession()
         {
+            CommitSplinePreview("Committed the live spline preview before disposing the mask session.");
             if (gpuEngine != null)
             {
                 if (hasUnsavedChanges)

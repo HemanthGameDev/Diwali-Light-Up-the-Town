@@ -16,15 +16,23 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         [SerializeField] private Vector3 localInTangent;
         [SerializeField] private Vector3 localOutTangent;
         [SerializeField] private bool hasCustomTangents;
+        [SerializeField, Range(0.05f, 4f)] private float widthScale;
+        [SerializeField, Range(0f, 1f)] private float pressure;
+        // Older path assets do not contain width/pressure fields. This flag lets their
+        // missing zero values retain neutral defaults (1, 1) after deserialization.
+        [SerializeField] private bool hasCustomWidthPressure;
 
         public Vector3 LocalPosition => localPosition;
         public Vector3 LocalNormal => localNormal;
         public Vector3 LocalInTangent => localInTangent;
         public Vector3 LocalOutTangent => localOutTangent;
         public bool HasCustomTangents => hasCustomTangents;
+        public float WidthScale => hasCustomWidthPressure ? Mathf.Clamp(widthScale, 0.05f, 4f) : 1f;
+        public float Pressure => hasCustomWidthPressure ? Mathf.Clamp01(pressure) : 1f;
+        public bool HasCustomWidthPressure => hasCustomWidthPressure;
 
         public SurfacePaintPathPoint(Vector3 position, Vector3 normal)
-            : this(position, normal, Vector3.zero, Vector3.zero, false)
+            : this(position, normal, Vector3.zero, Vector3.zero, false, 1f, 1f, false)
         {
         }
 
@@ -34,12 +42,28 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
             Vector3 inTangent,
             Vector3 outTangent,
             bool useCustomTangents)
+            : this(position, normal, inTangent, outTangent, useCustomTangents, 1f, 1f, false)
+        {
+        }
+
+        public SurfacePaintPathPoint(
+            Vector3 position,
+            Vector3 normal,
+            Vector3 inTangent,
+            Vector3 outTangent,
+            bool useCustomTangents,
+            float anchorWidthScale,
+            float anchorPressure,
+            bool useCustomWidthPressure)
         {
             localPosition = position;
             localNormal = normal.sqrMagnitude > 0.000001f ? normal.normalized : Vector3.up;
             localInTangent = inTangent;
             localOutTangent = outTangent;
             hasCustomTangents = useCustomTangents;
+            widthScale = Mathf.Clamp(anchorWidthScale, 0.05f, 4f);
+            pressure = Mathf.Clamp01(anchorPressure);
+            hasCustomWidthPressure = useCustomWidthPressure;
         }
     }
 
@@ -74,6 +98,9 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         [SerializeField] private bool closedLoop;
         [SerializeField] private bool randomizePerStamp;
         [SerializeField] private int randomSeed = 1;
+        [SerializeField] private bool pressureAffectsWidth = true;
+        [SerializeField] private bool pressureAffectsOpacity = true;
+        [SerializeField] private bool hasSavedPressureBehaviorSettings;
 
         public string TargetGlobalObjectId => targetGlobalObjectId;
         public string TargetDisplayName => targetDisplayName;
@@ -94,7 +121,13 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
         public bool ClosedLoop => closedLoop;
         public bool RandomizePerStamp => randomizePerStamp;
         public int RandomSeed => randomSeed;
+        // Older path assets have no saved pressure behavior; retain neutral legacy behavior.
+        public bool PressureAffectsWidth => hasSavedPressureBehaviorSettings ? pressureAffectsWidth : true;
+        public bool PressureAffectsOpacity => hasSavedPressureBehaviorSettings ? pressureAffectsOpacity : true;
 
+        // Backward-compatible overload for integrations compiled against preview.2.
+        // Existing callers have no pressure profile settings, so neutral (1, 1) point
+        // values keep their previous visual behavior.
         public void Configure(
             string globalObjectId,
             string displayName,
@@ -115,6 +148,37 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
             bool closePath,
             bool randomizeStamps,
             int seed)
+        {
+            Configure(
+                globalObjectId, displayName, pathPoints, selectedLayerId, pageIndex,
+                channel, radius, paintOpacity, brushHardness, brushSpacing,
+                eraseOperation, smoothOperation, preset, alphaOverride,
+                rotationDegrees, randomizedScale, closePath, randomizeStamps, seed,
+                true, true);
+        }
+
+        public void Configure(
+            string globalObjectId,
+            string displayName,
+            IList<SurfacePaintPathPoint> pathPoints,
+            string selectedLayerId,
+            int pageIndex,
+            SurfaceMaskChannel channel,
+            float radius,
+            float paintOpacity,
+            float brushHardness,
+            float brushSpacing,
+            bool eraseOperation,
+            bool smoothOperation,
+            SurfaceBrushPreset preset,
+            Texture2D alphaOverride,
+            float rotationDegrees,
+            float randomizedScale,
+            bool closePath,
+            bool randomizeStamps,
+            int seed,
+            bool pressureControlsWidth,
+            bool pressureControlsOpacity)
         {
             targetGlobalObjectId = globalObjectId ?? string.Empty;
             targetDisplayName = displayName ?? string.Empty;
@@ -137,6 +201,9 @@ namespace HemanthGameDev.SurfaceWeaver.Runtime
             closedLoop = closePath;
             randomizePerStamp = randomizeStamps;
             randomSeed = seed;
+            pressureAffectsWidth = pressureControlsWidth;
+            pressureAffectsOpacity = pressureControlsOpacity;
+            hasSavedPressureBehaviorSettings = true;
         }
 
         private void OnValidate()

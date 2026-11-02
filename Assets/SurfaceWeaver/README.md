@@ -1,6 +1,6 @@
-# SurfaceWeaver v0.7.10
+# SurfaceWeaver v0.8.0-preview.2-hotfix.3
 
-SurfaceWeaver is an Editor-focused custom-mesh surface painting tool for Unity 6 URP. The v0.6.6 authoring foundation supports UV0 mask painting, RGBA channels, brushes, Undo/Redo, UV diagnostics, and spline/path authoring. v0.7 adds the profile-driven URP layered rendering workflow that consumes the painted mask pages. v0.7.7–v0.7.8 add connected UV island grouping and stacked/mirrored/contained/partial overlap diagnostics. v0.7.9 adds island-aware UV gutter padding and v0.7.10 adds selected-channel UV-constrained mask dilation. v0.7.11 adds mip-map bleeding prevention for packed masks. v0.8.0-preview.1 adds draggable path anchors and editable Bézier tangent handles.
+SurfaceWeaver is an Editor-focused custom-mesh surface painting tool for Unity 6 URP. The v0.6.6 authoring foundation supports UV0 mask painting, RGBA channels, brushes, Undo/Redo, UV diagnostics, and spline/path authoring. v0.7 adds the profile-driven URP layered rendering workflow that consumes the painted mask pages. v0.7.7–v0.7.8 add connected UV island grouping and stacked/mirrored/contained/partial overlap diagnostics. v0.7.9 adds island-aware UV gutter padding and v0.7.10 adds selected-channel UV-constrained mask dilation. v0.7.11 adds mip-map bleeding prevention for packed masks. v0.8.0-preview.1 adds draggable path anchors and editable Bézier tangent handles. v0.8.0-preview.2-hotfix.3 restores the single-active-target spline workflow and adds an Inspector anchor selector. Multi-mesh path authoring is deferred.
 
 ## v0.7 rendering at a glance
 
@@ -37,7 +37,7 @@ This is an initial rendering implementation, not a claim of completed mobile opt
 10. Use **Validate UV Channel** before painting to inspect UV range, degenerate triangles, triangle overlaps, geometric seams, UV island groups, and stacked/mirrored/contained/partial overlaps.
 11. Load the relevant mask page and use **UV Gutter Padding > Apply UV Gutter Padding to Active Mask** to copy RGBA edge texels into unused UV atlas space. The operation is Undoable; save the page to persist it. It refuses separate-island overlaps or padding-front collisions.
 12. Use **UV-Constrained Mask Dilation > Apply Mask Dilation to Selected Channel** to expand existing values in the selected layer's channel inside UV island coverage. It does not change other channels or write into empty atlas space. The operation is Undoable; save the page to persist it.
-13. For paths, enable **Path Authoring**, click two or more points on the mesh, select an anchor to move it or edit its incoming/outgoing Bézier handles, then use Apply Spline or Save Path Asset. Reset controls restore automatic tangents.
+13. For paths, select one `SurfacePaintTarget`, enable **Path Authoring**, and click that target mesh to add anchors. Select an anchor by clicking its Scene View sphere or using the **Edit Anchor** dropdown. Drag any anchor to move it on the active target; its incoming/outgoing Bézier handles are editable when selected. Save Path Asset to persist the path. Spline authoring in this preview is intentionally single-target; clicking other meshes does not register them or move the path to them.
 
 ## Quick start: render profile layers
 
@@ -75,7 +75,7 @@ The shader name is `HemanthGameDev/SurfaceWeaver/URP Layered Surface`. It has a 
 - Skinned meshes are not supported; the current painter targets static `MeshFilter` + `MeshRenderer` objects.
 - Overlapping/stacked UVs cannot store independent masks in the same texels. UV diagnostics report connected islands and stacked/mirrored/contained/partial overlaps; they do not automatically unwrap or move them. v0.7.9 adds non-destructive-in-session gutter padding into unused atlas texels. It refuses separate-island overlap cases and insufficient-gap collisions. v0.7.10 adds selected-channel mask dilation inside island boundaries; v0.7.11 adds mip-map bleeding prevention for packed masks; verify the documented minification trade-off on target devices.
 - Smooth remains a local UV-neighbourhood operation and is not seam-aware.
-- v0.8.0-preview.1 adds draggable anchors and independently editable incoming/outgoing Bézier handles. Per-anchor width/pressure curves remain deferred.
+- v0.8.0-preview.1 adds draggable anchors and independently editable incoming/outgoing Bézier handles. v0.8.0-preview.2-hotfix.3 restores single-active-target anchor placement and movement, adds an Inspector anchor selector, and defers multi-mesh path authoring. Per-anchor width/pressure curves remain deferred.
 - Large/high-poly meshes and repeated stamps need profiling and future batching/spatial optimization.
 - No Android performance claim is made until the shader is profiled on target devices.
 
@@ -89,7 +89,7 @@ The shader name is `HemanthGameDev/SurfaceWeaver/URP Layered Surface`. It has a 
 
 ## Validation status
 
-The v0.8.0-preview.1 spline-anchor/tangent source patch is not yet compiled or exercised in the consuming Unity project. Run `Documentation/Manual_Test_Plan_v0.8.0-preview.1.md` on a duplicate scene/profile/path asset before using it on production content. The first OnePlus CPH2467 Vulkan profiling baseline is recorded in `Documentation/Mobile_Performance_Baseline_OnePlus_CPH2467_2026-11-02.md`; the 1/2/4 overlay comparison, thermal testing, OpenGLES3 run, and second-device validation remain pending.
+The developer reported that preview.1 anchor and tangent editing worked in Unity. Preview.2 multi-surface binding is superseded by hotfix.3. Verify single-target drawing, selection, movement, tangent editing, path save/load, and Apply Spline using `Documentation/Manual_Test_Plan_v0.8.0-preview.2-hotfix.3.md` before using it on production content. The first OnePlus CPH2467 Vulkan profiling baseline is recorded in `Documentation/Mobile_Performance_Baseline_OnePlus_CPH2467_2026-11-02.md`; the 1/2/4 overlay comparison, thermal testing, OpenGLES3 run, and second-device validation remain pending.
 
 The v0.7.8 diagnostics were verified by the developer in Unity using a simple quad, overlapping/contained UV islands, and mirrored overlaps within a connected island. The developer verified the v0.7.9 gutter-padding operation, Undo/Redo, and save/reload on a 1024 x 1024 mask page. Collision protection and larger-resolution edge cases still need testing. The v0.7.10 mask-dilation implementation is source-prepared and must be compiled and manually verified in the consuming Unity 6 project. Complete `Documentation/Manual_Test_Plan_v0.7.10.md` on a duplicate mesh/profile before modifying production mask pages. An initial Android baseline was captured on OnePlus CPH2467 using Vulkan; complete the 1-, 2-, and 4-overlay comparison, thermal runs, and a second-device/API pass before making a broad Android performance claim.
 
