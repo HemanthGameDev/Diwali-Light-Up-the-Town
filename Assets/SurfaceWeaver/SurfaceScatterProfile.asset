@@ -13,17 +13,17 @@ MonoBehaviour:
   m_Name: SurfaceScatterProfile
   m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Editor::HemanthGameDev.SurfaceWeaver.Editor.SurfaceScatterProfile
   prefabs:
-  - prefab: {fileID: 0}
-    weight: 0
-    minimumScale: 0.01
-    maximumScale: 0.01
+  - prefab: {fileID: 3240421222700719615, guid: e9b0212ed69cad14bbce290ad905e0b9, type: 3}
+    weight: 1
+    minimumScale: 1
+    maximumScale: 1
     rotationOffset: {x: 0, y: 0, z: 0}
-  - prefab: {fileID: 0}
-    weight: 0
-    minimumScale: 0.01
-    maximumScale: 0.01
+  - prefab: {fileID: 7539975119317226518, guid: b2348c511f5b86b4cb0d97d2cba96c93, type: 3}
+    weight: 1
+    minimumScale: 1
+    maximumScale: 1
     rotationOffset: {x: 0, y: 0, z: 0}
-  brushRadius: 2
+  brushRadius: 5.51
   instancesPerStamp: 8
   strokeSpacing: 1
   minimumInstanceDistance: 0.65
@@ -33,7 +33,7 @@ MonoBehaviour:
   projectionDistance: 5
   exclusionLayers:
     serializedVersion: 2
-    m_Bits: 0
+    m_Bits: 16
   exclusionRadius: 0.4
   randomYaw: 1
   yawRange: 360

@@ -22,6 +22,10 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private int uvGutterPaddingPixels = 8;
         private bool showMaskDilationSection = true;
         private int maskDilationRadiusPixels = 4;
+        private bool floodFillArmed;
+        private float floodFillTolerance = 0.02f;
+        private float floodFillTargetValue = 1f;
+        private bool floodFillEightConnected;
         private bool showMipMapBleedingPreventionSection = true;
         private Vector2 scroll;
 
@@ -115,6 +119,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private void OnEnable()
         {
             activeWindow = this;
+            floodFillArmed = false;
             SceneView.duringSceneGui += OnSceneGUI;
             if (Selection.activeGameObject != null)
             {
@@ -127,6 +132,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void OnDisable()
         {
+            floodFillArmed = false;
             CommitSplinePreview("Committed live spline preview when the Painter window closed.");
             EditorApplication.delayCall -= ProcessQueuedSplinePreviewRebuild;
             splinePreviewRebuildQueued = false;
@@ -241,6 +247,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private void SetTarget(SurfacePaintTarget value)
         {
+            floodFillArmed = false;
             if (target == value)
                 return;
 
@@ -766,12 +773,44 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                         ApplyChannelFill(layer, 0f, "Cleared selected layer channel.");
                     }
                 }
+
+                EditorGUILayout.Space(6f);
+                EditorGUILayout.LabelField("Connected-Region Flood Fill", EditorStyles.boldLabel);
+                floodFillTolerance = EditorGUILayout.Slider("Value Tolerance", floodFillTolerance, 0f, 0.25f);
+                floodFillTargetValue = EditorGUILayout.Slider("Fill Value", floodFillTargetValue, 0f, 1f);
+                floodFillEightConnected = EditorGUILayout.Toggle("8-Neighbour Connectivity", floodFillEightConnected);
+                long floodPixels = (long)gpuEngine.Width * gpuEngine.Height;
+                EditorGUILayout.LabelField("Approx. temporary CPU staging", FormatBytes(floodPixels * 13L));
+                if (gpuEngine.Width >= 4096 || gpuEngine.Height >= 4096)
+                {
+                    EditorGUILayout.HelpBox(
+                        "Flood fill reads the active GPU mask page back to CPU memory. At 4096² this can require over 200 MiB of temporary memory. Test at 1024/2048 first and ensure sufficient editor memory.",
+                        MessageType.Warning);
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    using (new EditorGUI.DisabledScope(isPainting || (!floodFillArmed && !CanPaint())))
+                    {
+                        string buttonLabel = floodFillArmed ? "Cancel Flood Fill" : "Arm Flood Fill — Click Mesh";
+                        if (GUILayout.Button(buttonLabel))
+                        {
+                            floodFillArmed = !floodFillArmed;
+                            paintStatus = floodFillArmed
+                                ? "Flood Fill armed. Click a point on the selected mesh to fill the connected region in the selected mask channel."
+                                : "Flood Fill cancelled.";
+                            Repaint();
+                            SceneView.RepaintAll();
+                        }
+                    }
+                }
+                if (floodFillArmed)
+                    EditorGUILayout.HelpBox("Flood Fill is armed. Click the target mesh in Scene View. Press Escape to cancel.", MessageType.Info);
             }
 
             EditorGUILayout.HelpBox(
                 "Hold the left mouse button over the target in Scene View to paint. Hold Alt for normal Scene View navigation. " +
                 "Paint writes white, Erase writes black, and Smooth averages the selected channel locally. " +
-                "Fill/Clear affect the entire selected channel. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y (or Shift+Z) redoes. Save Mask PNG to persist changes.",
+                "Fill/Clear affect the entire selected channel. Connected-Region Flood Fill uses UV-space pixel connectivity on the active channel and preserves other RGBA channels. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y (or Shift+Z) redoes. Save Mask PNG to persist changes.",
                 MessageType.Info);
             EditorGUILayout.LabelField("Painting Status", paintStatus);
 
@@ -796,6 +835,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     CommitSplinePreview("Committed the live spline preview when leaving Path Authoring.");
                 StopStroke();
                 pathAuthoringEnabled = newPathMode;
+                if (pathAuthoringEnabled) floodFillArmed = false;
                 hasPreviousPaintHit = false;
                 selectedPathPointIndex = -1;
                 SceneView.RepaintAll();
@@ -2454,6 +2494,40 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 sceneHitStatus = status;
             }
 
+            if (floodFillArmed)
+            {
+                if (currentEvent.type == EventType.Repaint && hitFound)
+                {
+                    Handles.color = new Color(0.15f, 0.85f, 1f, 0.95f);
+                    Handles.DrawWireDisc(hit.Point + hit.Normal * 0.015f, hit.Normal, 0.16f);
+                    Handles.Label(hit.Point + hit.Normal * 0.04f, "Flood Fill — click to seed");
+                }
+
+                if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.Escape)
+                {
+                    floodFillArmed = false;
+                    paintStatus = "Flood Fill cancelled.";
+                    currentEvent.Use();
+                    Repaint();
+                    return;
+                }
+
+                if (currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && hitFound && CanPaint())
+                {
+                    floodFillArmed = false;
+                    PerformFloodFill(hit);
+                    currentEvent.Use();
+                    return;
+                }
+
+                if (currentEvent.type == EventType.MouseMove || currentEvent.type == EventType.Repaint)
+                {
+                    Repaint();
+                    sceneView.Repaint();
+                }
+                return;
+            }
+
             if (pathAuthoringEnabled)
             {
                 DrawSplinePathPreview(hitFound, hitFound ? hit.Point : Vector3.zero);
@@ -2573,6 +2647,76 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 Repaint();
                 sceneView.Repaint();
             }
+        }
+
+        private void PerformFloodFill(SurfaceSceneHit hit)
+        {
+            SurfaceLayerDefinition layer = GetSelectedLayer();
+            if (!CanPaint() || layer == null || gpuEngine == null || !gpuEngine.IsInitialized)
+            {
+                paintStatus = "Load the selected mask page and enable painting before using Flood Fill.";
+                Repaint();
+                return;
+            }
+
+            CommitSplinePreview("Committed the live spline preview before Flood Fill.");
+            StopStroke();
+
+            Texture2D readback = gpuEngine.CreateReadbackTexture(out string error);
+            if (readback == null)
+            {
+                paintStatus = error;
+                Repaint();
+                return;
+            }
+
+            try
+            {
+                Color32[] pixels = readback.GetPixels32();
+                int x = Mathf.Clamp(Mathf.FloorToInt(hit.Uv0.x * gpuEngine.Width), 0, gpuEngine.Width - 1);
+                int y = Mathf.Clamp(Mathf.FloorToInt(hit.Uv0.y * gpuEngine.Height), 0, gpuEngine.Height - 1);
+                bool success = SurfaceMaskFloodFillProcessor.TryFill(
+                    pixels, gpuEngine.Width, gpuEngine.Height, x, y,
+                    (int)layer.MaskChannel, floodFillTolerance, floodFillTargetValue,
+                    floodFillEightConnected, out int changedPixels, out error);
+
+                if (!success)
+                {
+                    paintStatus = error;
+                    Repaint();
+                    return;
+                }
+
+                if (changedPixels <= 0)
+                {
+                    paintStatus = "Flood Fill found no eligible pixels in the selected region. Increase Value Tolerance or choose a different seed.";
+                    Repaint();
+                    return;
+                }
+
+                if (!gpuEngine.ApplyPixelChanges(pixels, out error))
+                {
+                    paintStatus = error;
+                    Repaint();
+                    return;
+                }
+
+                hasUnsavedChanges = true;
+                BindWorkingMaskPreview();
+                paintStatus = "Flood-filled " + changedPixels.ToString("N0") + " connected pixel(s) in " + layer.MaskChannel + ". Other RGBA channels were preserved. Undo is available.";
+            }
+            catch (Exception exception)
+            {
+                paintStatus = "Flood Fill failed: " + exception.Message;
+            }
+            finally
+            {
+                if (readback != null)
+                    DestroyImmediate(readback);
+            }
+
+            Repaint();
+            SceneView.RepaintAll();
         }
 
         private bool CanPaint()

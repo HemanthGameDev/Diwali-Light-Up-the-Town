@@ -31,10 +31,17 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         [SerializeField] private ScatterMode mode;
         [SerializeField] private bool scenePlacementEnabled;
         [SerializeField] private bool showAdvanced;
+        [SerializeField] private bool liveUpdateExistingInstances = true;
         [SerializeField] private Vector2 scroll;
 
         private SerializedObject serializedProfile;
         private readonly List<SurfacePaintTarget> cachedTargets = new List<SurfacePaintTarget>();
+        private readonly List<GameObject> previewInstances = new List<GameObject>();
+        private readonly List<GameObject> previewPrefabReferences = new List<GameObject>();
+        private GameObject previewRoot;
+        private bool previewDirty = true;
+        private bool hasPreviewHit;
+        private TargetHit lastPreviewHit;
         private bool isStroke;
         private int activeControlId;
         private Vector3 lastStampPoint;
@@ -68,13 +75,14 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (GUIUtility.hotControl == activeControlId)
                 GUIUtility.hotControl = 0;
             scenePlacementEnabled = false;
+            ClearPreviewInstances();
         }
 
         private void OnGUI()
         {
             scroll = EditorGUILayout.BeginScrollView(scroll);
             EditorGUILayout.LabelField("SURFACEWEAVER — OBJECT & VEGETATION SCATTER", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Place weighted prefab instances on registered mesh targets.", EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField("Place enabled prefab entries on registered mesh targets.", EditorStyles.wordWrappedMiniLabel);
             EditorGUILayout.Space(6f);
 
             EditorGUILayout.HelpBox(
@@ -104,6 +112,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 {
                     RefreshSerializedProfile();
                     RefreshTargetCache();
+                    previewDirty = true;
                     SceneView.RepaintAll();
                 }
 
@@ -137,7 +146,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             serializedProfile.Update();
             EditorGUILayout.Space(4f);
             EditorGUILayout.LabelField("Prefab Library", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("prefabs"), new GUIContent("Weighted Prefabs"), true);
+            DrawPrefabEntries();
             EditorGUILayout.Space(4f);
             EditorGUILayout.LabelField("Placement Settings", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(serializedProfile.FindProperty("brushRadius"));
@@ -155,6 +164,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 EditorGUILayout.PropertyField(serializedProfile.FindProperty("projectionDistance"));
                 EditorGUILayout.PropertyField(serializedProfile.FindProperty("exclusionLayers"), new GUIContent("Exclusion Layers"));
                 EditorGUILayout.PropertyField(serializedProfile.FindProperty("exclusionRadius"));
+                EditorGUILayout.PropertyField(serializedProfile.FindProperty("globalScaleMultiplier"),
+                    new GUIContent("Global Scale (X Width / Y Height / Z Depth)"));
                 EditorGUILayout.PropertyField(serializedProfile.FindProperty("randomYaw"));
                 if (profile.randomYaw)
                     EditorGUILayout.PropertyField(serializedProfile.FindProperty("yawRange"));
@@ -169,7 +180,74 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             }
 
             if (serializedProfile.ApplyModifiedProperties())
+            {
+                previewDirty = true;
+                if (liveUpdateExistingInstances)
+                    UpdateExistingInstancesFromProfile(false);
                 SceneView.RepaintAll();
+            }
+
+            EditorGUILayout.Space(6f);
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField("Existing Scatter Instances", EditorStyles.boldLabel);
+                liveUpdateExistingInstances = EditorGUILayout.ToggleLeft(
+                    "Live Update Existing Instances", liveUpdateExistingInstances);
+                EditorGUILayout.HelpBox(
+                    "When enabled, edits to per-prefab scale, global X/Y/Z scale, rotation randomization, surface alignment and surface offset update already-placed instances from their stored placement data. Weight affects future prefab selection only. Brush radius, density, spacing and instances-per-stamp affect future stamps only.",
+                    MessageType.Info);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (GUILayout.Button("Adopt Existing Instances")) AdoptExistingInstances();
+                    if (GUILayout.Button("Update Existing Now")) UpdateExistingInstancesFromProfile(true);
+                }
+            }
+        }
+
+        private void DrawPrefabEntries()
+        {
+            SerializedProperty entries = serializedProfile.FindProperty("prefabs");
+            if (entries == null) return;
+
+            EditorGUILayout.PropertyField(entries, new GUIContent("Prefab Entries"), false);
+            if (!entries.isExpanded) return;
+
+            EditorGUI.indentLevel++;
+            int removeIndex = -1;
+            for (int i = 0; i < entries.arraySize; i++)
+            {
+                SerializedProperty entry = entries.GetArrayElementAtIndex(i);
+                SerializedProperty prefab = entry.FindPropertyRelative("prefab");
+                SerializedProperty weight = entry.FindPropertyRelative("weight");
+                SerializedProperty minScale = entry.FindPropertyRelative("minimumScale");
+                SerializedProperty maxScale = entry.FindPropertyRelative("maximumScale");
+                SerializedProperty rotation = entry.FindPropertyRelative("rotationOffset");
+                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        EditorGUILayout.LabelField("Prefab " + (i + 1), EditorStyles.boldLabel);
+                        if (GUILayout.Button("−", GUILayout.Width(24f))) removeIndex = i;
+                    }
+                    EditorGUILayout.PropertyField(prefab, new GUIContent("Prefab"));
+                    EditorGUILayout.PropertyField(weight, new GUIContent("Selection Weight"));
+                    EditorGUILayout.PropertyField(minScale, new GUIContent("Minimum Scale"));
+                    EditorGUILayout.PropertyField(maxScale, new GUIContent("Maximum Scale"));
+                    EditorGUILayout.PropertyField(rotation, new GUIContent("Rotation Offset"));
+                    EditorGUILayout.LabelField("Weight 0 excludes this prefab; higher weights make it more likely to be selected.", EditorStyles.miniLabel);
+                }
+            }
+            if (removeIndex >= 0) entries.DeleteArrayElementAtIndex(removeIndex);
+            if (GUILayout.Button("+ Add Prefab Entry"))
+            {
+                int index = entries.arraySize++;
+                SerializedProperty added = entries.GetArrayElementAtIndex(index);
+                added.FindPropertyRelative("weight").floatValue = 1f;
+                added.FindPropertyRelative("minimumScale").floatValue = 0.8f;
+                added.FindPropertyRelative("maximumScale").floatValue = 1.2f;
+                added.FindPropertyRelative("entryId").stringValue = Guid.NewGuid().ToString("N");
+            }
+            EditorGUI.indentLevel--;
         }
 
         private void DrawPlacementControls()
@@ -186,6 +264,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     {
                         scenePlacementEnabled = !scenePlacementEnabled;
                         isStroke = false;
+                        if (!scenePlacementEnabled) ClearPreviewInstances();
+                        previewDirty = true;
                         status = scenePlacementEnabled
                             ? "Scene placement enabled. Drag in a Scene View over a registered target. Hold Alt to navigate."
                             : "Scene placement disabled.";
@@ -193,7 +273,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                     }
                 }
                 if (scenePlacementEnabled)
-                    EditorGUILayout.HelpBox("Drag with the left mouse button in the Scene View. Hold Alt to orbit/pan. Each brush stamp is Undoable.", MessageType.Info);
+                    EditorGUILayout.HelpBox("Move the pointer over a registered target to see live prefab ghosts. Adjust the profile to update the preview; click/drag to commit stamps. Hold Alt to navigate. Each stamp is Undoable.", MessageType.Info);
             }
         }
 
@@ -237,7 +317,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             profile = created;
             RefreshSerializedProfile();
             EditorGUIUtility.PingObject(created);
-            status = "Created a Scatter Profile. Add one or more prefab entries to its Weighted Prefabs list.";
+            status = "Created a Scatter Profile. Add prefab entries and adjust their selection weights. A weight of zero excludes an entry.";
         }
 
         private void RefreshSerializedProfile()
@@ -320,7 +400,15 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
             bool hasHit = TryPickTarget(evt.mousePosition, out TargetHit hit);
             if (evt.type == EventType.Repaint && hasHit)
+            {
                 DrawBrushPreview(hit);
+                if (mode == ScatterMode.Paint) DrawPrefabPreview(hit);
+                else ClearPreviewInstances();
+            }
+            else if (evt.type == EventType.Repaint && !hasHit)
+            {
+                ClearPreviewInstances();
+            }
 
             if (evt.type == EventType.MouseDown && evt.button == 0 && hasHit)
             {
@@ -401,6 +489,77 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             SceneView.RepaintAll();
         }
 
+        private sealed class ScatterPlacement
+        {
+            public SurfaceScatterPrefabEntry Entry;
+            public Vector3 Position;
+            public Quaternion Rotation;
+            public float Scale;
+            public Vector3 Normal;
+            public Vector3 SurfacePoint;
+            public float NormalizedScale;
+            public float NormalizedYaw;
+            public float NormalizedPitch;
+            public float NormalizedRoll;
+        }
+
+        private List<ScatterPlacement> GeneratePlacements(TargetHit hit, int seed)
+        {
+            List<ScatterPlacement> placements = new List<ScatterPlacement>();
+            if (profile == null || hit.Collider == null) return placements;
+
+            List<Vector3> occupied = CollectOccupiedPositions();
+            System.Random random = new System.Random(unchecked(seed));
+            int attempts = Mathf.Max(profile.instancesPerStamp * 24, 24);
+            Vector3 normal = hit.Normal.sqrMagnitude > 0.0001f ? hit.Normal.normalized : Vector3.up;
+            Vector3 tangent = Vector3.Cross(normal, Vector3.up);
+            if (tangent.sqrMagnitude < 0.0001f) tangent = Vector3.Cross(normal, Vector3.forward);
+            tangent.Normalize();
+            Vector3 bitangent = Vector3.Cross(normal, tangent).normalized;
+
+            for (int i = 0; i < attempts && placements.Count < profile.instancesPerStamp; i++)
+            {
+                Vector2 sample = RandomInsideCircle(random) * profile.brushRadius;
+                Vector3 origin = hit.Point + tangent * sample.x + bitangent * sample.y + normal * profile.projectionDistance;
+                Ray ray = new Ray(origin, -normal);
+                if (!hit.Collider.Raycast(ray, out RaycastHit candidate, profile.projectionDistance * 2f)) continue;
+                if (Vector3.Angle(Vector3.up, candidate.normal) > profile.maximumSlopeAngle) continue;
+                if (IsBlockedByExclusion(candidate.point + candidate.normal * profile.surfaceOffset, hit.Collider)) continue;
+                if (IsTooClose(candidate.point, occupied, profile.minimumInstanceDistance)) continue;
+
+                SurfaceScatterPrefabEntry entry = ChoosePrefab(random);
+                if (entry == null || entry.prefab == null) break;
+
+                float scaleMin = Mathf.Max(0.01f, Mathf.Min(entry.minimumScale, entry.maximumScale));
+                float scaleMax = Mathf.Max(scaleMin, Mathf.Max(entry.minimumScale, entry.maximumScale));
+                float normalizedScale = (float)random.NextDouble();
+                float normalizedYaw = NextFloat(random, -1f, 1f);
+                float normalizedPitch = NextFloat(random, -1f, 1f);
+                float normalizedRoll = NextFloat(random, -1f, 1f);
+                float scale = Mathf.Lerp(scaleMin, scaleMax, normalizedScale);
+                float yaw = profile.randomYaw ? normalizedYaw * profile.yawRange * 0.5f : 0f;
+                float pitch = profile.randomPitchAndRoll ? normalizedPitch * profile.pitchRange : 0f;
+                float roll = profile.randomPitchAndRoll ? normalizedRoll * profile.rollRange : 0f;
+                Quaternion align = profile.alignToSurfaceNormal ? Quaternion.FromToRotation(Vector3.up, candidate.normal) : Quaternion.identity;
+                Quaternion rotation = align * Quaternion.Euler(entry.rotationOffset) * Quaternion.Euler(pitch, yaw, roll);
+                placements.Add(new ScatterPlacement
+                {
+                    Entry = entry,
+                    Position = candidate.point + candidate.normal * profile.surfaceOffset,
+                    Rotation = rotation,
+                    Scale = scale,
+                    Normal = candidate.normal,
+                    SurfacePoint = candidate.point,
+                    NormalizedScale = normalizedScale,
+                    NormalizedYaw = normalizedYaw,
+                    NormalizedPitch = normalizedPitch,
+                    NormalizedRoll = normalizedRoll
+                });
+                occupied.Add(candidate.point);
+            }
+            return placements;
+        }
+
         private void PlaceStamp(TargetHit hit)
         {
             if (!TryBuildTargetContainer(hit.Target, out Transform targetContainer))
@@ -410,65 +569,152 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 return;
             }
 
-            List<Vector3> occupied = CollectOccupiedPositions();
-            System.Random random = new System.Random(unchecked(profile.randomSeed + stampIndex++));
-            int placed = 0;
-            int attempts = Mathf.Max(profile.instancesPerStamp * 24, 24);
-            Vector3 normal = hit.Normal.sqrMagnitude > 0.0001f ? hit.Normal.normalized : Vector3.up;
-            Vector3 tangent = Vector3.Cross(normal, Vector3.up);
-            if (tangent.sqrMagnitude < 0.0001f)
-                tangent = Vector3.Cross(normal, Vector3.forward);
-            tangent.Normalize();
-            Vector3 bitangent = Vector3.Cross(normal, tangent).normalized;
-
+            List<ScatterPlacement> placements = GeneratePlacements(hit, unchecked(profile.randomSeed + stampIndex++));
             int undoGroup = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("SurfaceWeaver Scatter Objects");
-            for (int i = 0; i < attempts && placed < profile.instancesPerStamp; i++)
+            int placed = 0;
+            for (int i = 0; i < placements.Count; i++)
             {
-                Vector2 sample = RandomInsideCircle(random) * profile.brushRadius;
-                Vector3 origin = hit.Point + tangent * sample.x + bitangent * sample.y + normal * profile.projectionDistance;
-                Ray ray = new Ray(origin, -normal);
-                if (!hit.Collider.Raycast(ray, out RaycastHit candidate, profile.projectionDistance * 2f))
-                    continue;
-                if (Vector3.Angle(Vector3.up, candidate.normal) > profile.maximumSlopeAngle)
-                    continue;
-                if (IsBlockedByExclusion(candidate.point + candidate.normal * profile.surfaceOffset, hit.Collider))
-                    continue;
-                if (IsTooClose(candidate.point, occupied, profile.minimumInstanceDistance))
-                    continue;
-
-                SurfaceScatterPrefabEntry entry = ChoosePrefab(random);
-                if (entry == null || entry.prefab == null)
-                    break;
-
-                GameObject instance = PrefabUtility.InstantiatePrefab(entry.prefab, hit.Target.gameObject.scene) as GameObject;
-                if (instance == null)
-                    continue;
+                ScatterPlacement placement = placements[i];
+                GameObject instance = PrefabUtility.InstantiatePrefab(placement.Entry.prefab, hit.Target.gameObject.scene) as GameObject;
+                if (instance == null) continue;
                 Undo.RegisterCreatedObjectUndo(instance, "Place SurfaceWeaver Scatter Instance");
                 Undo.SetTransformParent(instance.transform, targetContainer, "Parent SurfaceWeaver Scatter Instance");
                 Undo.RecordObject(instance.transform, "Configure SurfaceWeaver Scatter Instance");
-
-                float scaleMin = Mathf.Max(0.01f, Mathf.Min(entry.minimumScale, entry.maximumScale));
-                float scaleMax = Mathf.Max(scaleMin, Mathf.Max(entry.minimumScale, entry.maximumScale));
-                float scale = NextFloat(random, scaleMin, scaleMax);
-                float yaw = profile.randomYaw ? NextFloat(random, -profile.yawRange * 0.5f, profile.yawRange * 0.5f) : 0f;
-                float pitch = profile.randomPitchAndRoll ? NextFloat(random, -profile.pitchRange, profile.pitchRange) : 0f;
-                float roll = profile.randomPitchAndRoll ? NextFloat(random, -profile.rollRange, profile.rollRange) : 0f;
-                Quaternion align = profile.alignToSurfaceNormal ? Quaternion.FromToRotation(Vector3.up, candidate.normal) : Quaternion.identity;
-                Quaternion variation = Quaternion.Euler(pitch, yaw, roll);
-                instance.transform.SetPositionAndRotation(candidate.point + candidate.normal * profile.surfaceOffset,
-                    align * Quaternion.Euler(entry.rotationOffset) * variation);
-                instance.transform.localScale = instance.transform.localScale * scale;
+                instance.transform.SetPositionAndRotation(placement.Position, placement.Rotation);
+                instance.transform.localScale = Vector3.Scale(
+                    placement.Entry.prefab.transform.localScale * placement.Scale,
+                    profile.globalScaleMultiplier);
+                SurfaceScatterInstanceData data = Undo.AddComponent<SurfaceScatterInstanceData>(instance);
+                data.profileGuid = GetProfileGuid();
+                data.prefabEntryId = placement.Entry.entryId;
+                data.sourcePrefab = placement.Entry.prefab;
+                data.surfacePoint = placement.SurfacePoint;
+                data.surfaceNormal = placement.Normal;
+                data.prefabBaseScale = placement.Entry.prefab.transform.localScale;
+                data.normalizedScale = placement.NormalizedScale;
+                data.normalizedYaw = placement.NormalizedYaw;
+                data.normalizedPitch = placement.NormalizedPitch;
+                data.normalizedRoll = placement.NormalizedRoll;
+                data.legacyAdopted = false;
                 PrefabUtility.RecordPrefabInstancePropertyModifications(instance.transform);
-
-                occupied.Add(candidate.point);
+                EditorUtility.SetDirty(data);
                 placed++;
             }
             Undo.CollapseUndoOperations(undoGroup);
             status = "Placed " + placed + " instance(s) on " + hit.Target.name + ". Undo removes the latest stamp.";
             Repaint();
-            if (placed > 0)
-                EditorSceneManager.MarkSceneDirty(hit.Target.gameObject.scene);
+            previewDirty = true;
+            if (placed > 0) EditorSceneManager.MarkSceneDirty(hit.Target.gameObject.scene);
+        }
+
+        private void DrawPrefabPreview(TargetHit hit)
+        {
+            if (profile == null || mode != ScatterMode.Paint) return;
+            bool changed = previewDirty || !hasPreviewHit || lastPreviewHit.Target != hit.Target ||
+                           (lastPreviewHit.Point - hit.Point).sqrMagnitude > 0.0004f ||
+                           Vector3.Angle(lastPreviewHit.Normal, hit.Normal) > 1f;
+            if (!changed) return;
+
+            previewDirty = false;
+            hasPreviewHit = true;
+            lastPreviewHit = hit;
+            List<ScatterPlacement> placements = GeneratePlacements(hit, unchecked(profile.randomSeed + stampIndex));
+            EnsurePreviewRoot();
+
+            for (int i = 0; i < placements.Count; i++)
+            {
+                ScatterPlacement placement = placements[i];
+                GameObject prefab = placement.Entry.prefab;
+                if (i >= previewInstances.Count || previewPrefabReferences[i] != prefab)
+                {
+                    while (previewInstances.Count <= i)
+                    {
+                        previewInstances.Add(null);
+                        previewPrefabReferences.Add(null);
+                    }
+                    DestroyPreviewAt(i);
+                    GameObject ghost = Instantiate(prefab, previewRoot.transform);
+                    ghost.name = "[Preview] " + prefab.name;
+                    SetPreviewFlagsAndDisableBehaviours(ghost);
+                    previewInstances[i] = ghost;
+                    previewPrefabReferences[i] = prefab;
+                }
+
+                GameObject preview = previewInstances[i];
+                if (preview == null) continue;
+                preview.SetActive(true);
+                preview.transform.SetPositionAndRotation(placement.Position, placement.Rotation);
+                preview.transform.localScale = Vector3.Scale(
+                    prefab.transform.localScale * placement.Scale, profile.globalScaleMultiplier);
+                Bounds bounds = GetPreviewBounds(preview);
+                Handles.color = new Color(0.2f, 1f, 0.45f, 0.75f);
+                Handles.DrawWireCube(bounds.center, bounds.size);
+            }
+
+            for (int i = placements.Count; i < previewInstances.Count; i++)
+                if (previewInstances[i] != null) previewInstances[i].SetActive(false);
+
+            Handles.color = Color.white;
+            Handles.Label(hit.Point + hit.Normal * (profile.surfaceOffset + 0.12f),
+                placements.Count + " prefab preview(s) — click to place");
+        }
+
+        private void EnsurePreviewRoot()
+        {
+            if (previewRoot != null) return;
+            previewRoot = new GameObject("SurfaceWeaver Scatter Preview (Temporary)")
+            {
+                hideFlags = HideFlags.HideAndDontSave
+            };
+        }
+
+        private static void SetPreviewFlagsAndDisableBehaviours(GameObject root)
+        {
+            Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < transforms.Length; i++)
+            {
+                GameObject go = transforms[i].gameObject;
+                go.hideFlags = HideFlags.HideAndDontSave;
+                go.layer = 2; // Ignore Raycast.
+                Collider[] colliders = go.GetComponents<Collider>();
+                for (int c = 0; c < colliders.Length; c++) colliders[c].enabled = false;
+                MonoBehaviour[] scripts = go.GetComponents<MonoBehaviour>();
+                for (int b = 0; b < scripts.Length; b++) if (scripts[b] != null) scripts[b].enabled = false;
+                AudioSource[] audio = go.GetComponents<AudioSource>();
+                for (int a = 0; a < audio.Length; a++) audio[a].enabled = false;
+                ParticleSystem[] particles = go.GetComponents<ParticleSystem>();
+                for (int q = 0; q < particles.Length; q++) particles[q].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            }
+        }
+
+        private static Bounds GetPreviewBounds(GameObject root)
+        {
+            Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0) return new Bounds(root.transform.position, Vector3.one * 0.25f);
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+            return bounds;
+        }
+
+        private void DestroyPreviewAt(int index)
+        {
+            if (index < 0 || index >= previewInstances.Count) return;
+            if (previewInstances[index] != null) DestroyImmediate(previewInstances[index]);
+            previewInstances[index] = null;
+            previewPrefabReferences[index] = null;
+        }
+
+        private void ClearPreviewInstances()
+        {
+            for (int i = 0; i < previewInstances.Count; i++)
+                if (previewInstances[i] != null) DestroyImmediate(previewInstances[i]);
+            previewInstances.Clear();
+            previewPrefabReferences.Clear();
+            if (previewRoot != null) DestroyImmediate(previewRoot);
+            previewRoot = null;
+            hasPreviewHit = false;
+            previewDirty = true;
         }
 
         private void EraseStamp(TargetHit hit)
@@ -621,29 +867,218 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
 
         private SurfaceScatterPrefabEntry ChoosePrefab(System.Random random)
         {
-            if (profile == null || profile.prefabs == null)
-                return null;
-            float total = 0f;
+            if (profile == null || profile.prefabs == null) return null;
+            double totalWeight = 0.0;
             for (int i = 0; i < profile.prefabs.Count; i++)
             {
                 SurfaceScatterPrefabEntry item = profile.prefabs[i];
                 if (item != null && item.prefab != null && item.weight > 0f)
-                    total += item.weight;
+                    totalWeight += item.weight;
             }
-            if (total <= 0f)
-                return null;
+            if (totalWeight <= 0.0) return null;
 
-            float value = (float)random.NextDouble() * total;
+            double roll = random.NextDouble() * totalWeight;
             for (int i = 0; i < profile.prefabs.Count; i++)
             {
                 SurfaceScatterPrefabEntry item = profile.prefabs[i];
-                if (item == null || item.prefab == null || item.weight <= 0f)
-                    continue;
-                value -= item.weight;
-                if (value <= 0f)
-                    return item;
+                if (item == null || item.prefab == null || item.weight <= 0f) continue;
+                roll -= item.weight;
+                if (roll <= 0.0) return item;
+            }
+            for (int i = profile.prefabs.Count - 1; i >= 0; i--)
+            {
+                SurfaceScatterPrefabEntry item = profile.prefabs[i];
+                if (item != null && item.prefab != null && item.weight > 0f) return item;
             }
             return null;
+        }
+
+
+        private string GetProfileGuid()
+        {
+            string path = profile != null ? AssetDatabase.GetAssetPath(profile) : string.Empty;
+            string guid = string.IsNullOrEmpty(path) ? string.Empty : AssetDatabase.AssetPathToGUID(path);
+            return string.IsNullOrEmpty(guid) ? (profile != null ? profile.name : string.Empty) : guid;
+        }
+
+        private SurfaceScatterPrefabEntry FindEntry(string entryId, GameObject sourcePrefab)
+        {
+            if (profile == null || profile.prefabs == null) return null;
+            for (int i = 0; i < profile.prefabs.Count; i++)
+            {
+                SurfaceScatterPrefabEntry entry = profile.prefabs[i];
+                if (entry == null) continue;
+                if (!string.IsNullOrEmpty(entryId) && entry.entryId == entryId) return entry;
+            }
+            for (int i = 0; i < profile.prefabs.Count; i++)
+            {
+                SurfaceScatterPrefabEntry entry = profile.prefabs[i];
+                if (entry != null && entry.prefab == sourcePrefab) return entry;
+            }
+            return null;
+        }
+
+        private void UpdateExistingInstancesFromProfile(bool showStatus)
+        {
+            if (profile == null) return;
+            SurfaceScatterInstanceData[] all = Resources.FindObjectsOfTypeAll<SurfaceScatterInstanceData>();
+            int updated = 0;
+            int skipped = 0;
+            int undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Update Existing SurfaceWeaver Scatter Instances");
+            string guid = GetProfileGuid();
+            for (int i = 0; i < all.Length; i++)
+            {
+                SurfaceScatterInstanceData data = all[i];
+                if (data == null || data.gameObject == null) continue;
+                Scene scene = data.gameObject.scene;
+                if (!scene.IsValid() || !scene.isLoaded || data.profileGuid != guid) continue;
+                SurfaceScatterPrefabEntry entry = FindEntry(data.prefabEntryId, data.sourcePrefab);
+                if (entry == null || entry.prefab == null) { skipped++; continue; }
+
+                Transform instanceTransform = data.transform;
+                Undo.RecordObject(instanceTransform, "Update Scatter Instance Transform");
+                Undo.RecordObject(data, "Update Scatter Instance Metadata");
+                Vector3 normal = data.surfaceNormal.sqrMagnitude > 0.0001f ? data.surfaceNormal.normalized : Vector3.up;
+                Vector3 position = data.surfacePoint + normal * profile.surfaceOffset;
+                Quaternion rotation;
+                Vector3 scale;
+                if (data.legacyAdopted)
+                {
+                    rotation = data.legacyBaseWorldRotation;
+                    scale = Vector3.Scale(data.legacyBaseLocalScale, profile.globalScaleMultiplier);
+                }
+                else
+                {
+                    float minimum = Mathf.Max(0.01f, Mathf.Min(entry.minimumScale, entry.maximumScale));
+                    float maximum = Mathf.Max(minimum, Mathf.Max(entry.minimumScale, entry.maximumScale));
+                    float randomScale = Mathf.Lerp(minimum, maximum, Mathf.Clamp01(data.normalizedScale));
+                    float yaw = profile.randomYaw ? data.normalizedYaw * profile.yawRange * 0.5f : 0f;
+                    float pitch = profile.randomPitchAndRoll ? data.normalizedPitch * profile.pitchRange : 0f;
+                    float roll = profile.randomPitchAndRoll ? data.normalizedRoll * profile.rollRange : 0f;
+                    Quaternion align = profile.alignToSurfaceNormal ? Quaternion.FromToRotation(Vector3.up, normal) : Quaternion.identity;
+                    rotation = align * Quaternion.Euler(entry.rotationOffset) * Quaternion.Euler(pitch, yaw, roll);
+                    scale = Vector3.Scale(data.prefabBaseScale * randomScale, profile.globalScaleMultiplier);
+                }
+                instanceTransform.SetPositionAndRotation(position, rotation);
+                instanceTransform.localScale = scale;
+                PrefabUtility.RecordPrefabInstancePropertyModifications(instanceTransform);
+                EditorUtility.SetDirty(data);
+                EditorSceneManager.MarkSceneDirty(scene);
+                updated++;
+            }
+            Undo.CollapseUndoOperations(undoGroup);
+            if (showStatus || updated > 0)
+                status = "Updated " + updated + " existing scatter instance(s)." +
+                         (skipped > 0 ? " Skipped " + skipped + " instance(s) whose prefab entry is missing." : string.Empty);
+            Repaint();
+            SceneView.RepaintAll();
+        }
+
+        private void AdoptExistingInstances()
+        {
+            if (profile == null || targetSet == null) return;
+            int adopted = 0;
+            string guid = GetProfileGuid();
+            int undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Adopt Existing SurfaceWeaver Scatter Instances");
+            foreach (SurfacePaintTarget target in ResolveTargets())
+            {
+                if (target == null) continue;
+                if (!TryFindExistingTargetContainer(target, out Transform container)) continue;
+                for (int i = 0; i < container.childCount; i++)
+                {
+                    Transform child = container.GetChild(i);
+                    if (child == null || child.GetComponent<SurfaceScatterInstanceData>() != null) continue;
+                    GameObject sourcePrefab = PrefabUtility.GetCorrespondingObjectFromSource(child.gameObject) as GameObject;
+                    if (sourcePrefab == null) continue;
+                    SurfaceScatterPrefabEntry entry = FindEntry(null, sourcePrefab);
+                    if (entry == null) continue;
+                    SurfaceScatterInstanceData data = Undo.AddComponent<SurfaceScatterInstanceData>(child.gameObject);
+                    data.profileGuid = guid;
+                    data.prefabEntryId = entry.entryId;
+                    data.sourcePrefab = sourcePrefab;
+                    data.surfaceNormal = Vector3.up;
+                    data.surfacePoint = child.position - Vector3.up * profile.surfaceOffset;
+                    MeshCollider targetCollider = target.GetComponent<MeshCollider>();
+                    if (targetCollider != null)
+                    {
+                        Ray adoptionRay = new Ray(child.position + Vector3.up * profile.projectionDistance, Vector3.down);
+                        if (targetCollider.Raycast(adoptionRay, out RaycastHit adoptionHit, profile.projectionDistance * 2f))
+                        {
+                            data.surfaceNormal = adoptionHit.normal;
+                            data.surfacePoint = adoptionHit.point;
+                        }
+                    }
+
+                    // Recover the previous uniform random scale from the prefab's source scale.
+                    data.prefabBaseScale = sourcePrefab.transform.localScale;
+                    float scaleRatio = EstimateUniformScale(child.localScale, data.prefabBaseScale);
+                    float scaleMin = Mathf.Max(0.01f, Mathf.Min(entry.minimumScale, entry.maximumScale));
+                    float scaleMax = Mathf.Max(scaleMin, Mathf.Max(entry.minimumScale, entry.maximumScale));
+                    data.normalizedScale = scaleMax > scaleMin
+                        ? Mathf.Clamp01(Mathf.InverseLerp(scaleMin, scaleMax, scaleRatio))
+                        : 0.5f;
+
+                    // Preserve the existing random rotation as normalized values so later profile edits can re-evaluate it.
+                    Quaternion alignedBase = profile.alignToSurfaceNormal
+                        ? Quaternion.FromToRotation(Vector3.up, data.surfaceNormal.normalized)
+                        : Quaternion.identity;
+                    Quaternion authoredBase = alignedBase * Quaternion.Euler(entry.rotationOffset);
+                    Quaternion randomDelta = Quaternion.Inverse(authoredBase) * child.rotation;
+                    Vector3 randomEuler = randomDelta.eulerAngles;
+                    float signedYaw = Mathf.DeltaAngle(0f, randomEuler.y);
+                    float signedPitch = Mathf.DeltaAngle(0f, randomEuler.x);
+                    float signedRoll = Mathf.DeltaAngle(0f, randomEuler.z);
+                    data.normalizedYaw = profile.randomYaw && profile.yawRange > 0.001f
+                        ? Mathf.Clamp(signedYaw / (profile.yawRange * 0.5f), -1f, 1f) : 0f;
+                    data.normalizedPitch = profile.randomPitchAndRoll && profile.pitchRange > 0.001f
+                        ? Mathf.Clamp(signedPitch / profile.pitchRange, -1f, 1f) : 0f;
+                    data.normalizedRoll = profile.randomPitchAndRoll && profile.rollRange > 0.001f
+                        ? Mathf.Clamp(signedRoll / profile.rollRange, -1f, 1f) : 0f;
+                    data.legacyAdopted = false;
+                    EditorUtility.SetDirty(data);
+                    adopted++;
+                }
+            }
+            Undo.CollapseUndoOperations(undoGroup);
+            status = "Adopted " + adopted + " existing prefab instance(s). Their current scale and rotation are preserved as the baseline; global scale and surface offset can now update them.";
+            Repaint();
+        }
+
+        private static float EstimateUniformScale(Vector3 instanceScale, Vector3 prefabScale)
+        {
+            float sum = 0f;
+            int count = 0;
+            if (Mathf.Abs(prefabScale.x) > 0.0001f) { sum += Mathf.Abs(instanceScale.x / prefabScale.x); count++; }
+            if (Mathf.Abs(prefabScale.y) > 0.0001f) { sum += Mathf.Abs(instanceScale.y / prefabScale.y); count++; }
+            if (Mathf.Abs(prefabScale.z) > 0.0001f) { sum += Mathf.Abs(instanceScale.z / prefabScale.z); count++; }
+            return count > 0 ? sum / count : 1f;
+        }
+
+        private bool TryFindExistingTargetContainer(SurfacePaintTarget target, out Transform targetContainer)
+        {
+            targetContainer = null;
+            if (target == null || profile == null) return false;
+            string profileKey = GetProfileGuid();
+            string rootName = RootPrefix + profile.name + " [" + profileKey + "]";
+            GameObject[] roots = target.gameObject.scene.GetRootGameObjects();
+            GlobalObjectId targetId = GlobalObjectId.GetGlobalObjectIdSlow(target);
+            string targetKey = "Target - " + target.name + " [" + targetId + "]";
+            for (int r = 0; r < roots.Length; r++)
+            {
+                if (roots[r] == null || roots[r].name != rootName) continue;
+                for (int c = 0; c < roots[r].transform.childCount; c++)
+                {
+                    Transform child = roots[r].transform.GetChild(c);
+                    if (child != null && child.name == targetKey)
+                    {
+                        targetContainer = child;
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private static bool IsTooClose(Vector3 point, List<Vector3> occupied, float minimumDistance)

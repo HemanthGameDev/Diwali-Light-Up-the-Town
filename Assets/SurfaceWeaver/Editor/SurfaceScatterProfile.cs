@@ -4,11 +4,12 @@ using UnityEngine;
 
 namespace HemanthGameDev.SurfaceWeaver.Editor
 {
-    /// <summary>Weighted prefab entry used by the editor-only scene scatter tool.</summary>
+    /// <summary>Prefab entry used by the editor-only scene scatter tool.</summary>
     [Serializable]
     public sealed class SurfaceScatterPrefabEntry
     {
         public GameObject prefab;
+        [HideInInspector] public string entryId = Guid.NewGuid().ToString("N");
         [Min(0f)] public float weight = 1f;
         [Min(0.01f)] public float minimumScale = 0.8f;
         [Min(0.01f)] public float maximumScale = 1.2f;
@@ -40,6 +41,8 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         [Min(0.01f)] public float exclusionRadius = 0.4f;
 
         [Header("Randomization")]
+        [Tooltip("Global non-uniform scale applied to every placed instance. X = width, Y = height, Z = depth.")]
+        public Vector3 globalScaleMultiplier = Vector3.one;
         public bool randomYaw = true;
         [Range(0f, 360f)] public float yawRange = 360f;
         public bool randomPitchAndRoll;
@@ -60,15 +63,24 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             yawRange = Mathf.Clamp(yawRange, 0f, 360f);
             pitchRange = Mathf.Clamp(pitchRange, 0f, 45f);
             rollRange = Mathf.Clamp(rollRange, 0f, 45f);
+            globalScaleMultiplier.x = Mathf.Max(0.01f, globalScaleMultiplier.x);
+            globalScaleMultiplier.y = Mathf.Max(0.01f, globalScaleMultiplier.y);
+            globalScaleMultiplier.z = Mathf.Max(0.01f, globalScaleMultiplier.z);
 
             if (prefabs == null)
                 prefabs = new List<SurfaceScatterPrefabEntry>();
+            HashSet<string> entryIds = new HashSet<string>();
             for (int i = 0; i < prefabs.Count; i++)
             {
                 SurfaceScatterPrefabEntry entry = prefabs[i];
                 if (entry == null)
                     continue;
                 entry.weight = Mathf.Max(0f, entry.weight);
+                if (string.IsNullOrEmpty(entry.entryId) || !entryIds.Add(entry.entryId))
+                {
+                    entry.entryId = Guid.NewGuid().ToString("N");
+                    entryIds.Add(entry.entryId);
+                }
                 entry.minimumScale = Mathf.Max(0.01f, entry.minimumScale);
                 entry.maximumScale = Mathf.Max(entry.minimumScale, entry.maximumScale);
             }

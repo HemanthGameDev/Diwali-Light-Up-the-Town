@@ -94,3 +94,15 @@ Source-level checks only. Unity Editor compilation, Scene View input, serializat
 - Adds per-stamp Undo/Redo and target-specific erasing.
 - Keeps the existing grayscale Scatter brush, Painter, spline tools, masks, runtime shader and Runtime assembly unchanged.
 - Source and archive checks only; consuming Unity project compilation and manual acceptance remain required.
+
+
+## v0.8.0-preview.6.1
+- Added per-prefab Enabled toggles; enabled entries are selected uniformly rather than by weight.
+- Added non-destructive live prefab placement ghosts in Scene View.
+- Profile changes rebuild the preview; committed objects are not modified retroactively.
+
+
+## v0.8.0-preview.7
+- Added UV texture-space connected-region mask Flood Fill with tolerance and 4-/8-neighbour connectivity.
+- Preserves non-selected RGBA channels and creates one Undo step.
+- Explicitly documents UV-island adjacency limitations and CPU readback memory costs.

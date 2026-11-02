@@ -19,8 +19,8 @@ This roadmap reflects the product plan confirmed by the developer. A source impl
 - Batch mask export from multiple selected targets (preview.4; developer-confirmed working).
 - Multi-Mesh Workspace and reusable target sets (preview.5; developer-confirmed working).
 - Continuous cross-target mask painting (preview.5.1; developer acceptance status not yet reconfirmed in this branch).
-- Object and vegetation scatter placement (preview.6; implementation prepared; consuming Unity project validation pending).
-- Connected-region Flood Fill and additional surface tools.
+- Object and vegetation scatter placement with Enabled prefab toggles and non-destructive live placement ghosts (preview.6.1; implementation prepared; consuming Unity project validation pending).
+- Connected-region UV mask Flood Fill (preview.7; texture-space implementation; mesh-topology-aware island constraints remain a follow-up) and additional surface tools.
 
 ## v0.9 — Quality and optimization
 - Automated tests.
