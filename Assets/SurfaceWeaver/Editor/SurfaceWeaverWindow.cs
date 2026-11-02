@@ -171,6 +171,60 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             SceneView.RepaintAll();
         }
 
+        /// <summary>
+        /// Safely hands one target from the single-target Painter to the Multi-Mesh Painter.
+        /// Any pending spline/brush work is committed and saved before the shared mask asset is
+        /// opened by the second GPU session. The old GPU session is disposed to prevent stale
+        /// working textures from overwriting multi-mesh results when the user returns.
+        /// </summary>
+        public static bool PrepareForMultiMeshPainting(
+            SurfacePaintTarget selectedTarget,
+            out bool painterSessionPrepared,
+            out string error)
+        {
+            painterSessionPrepared = false;
+            error = string.Empty;
+            if (activeWindow == null || activeWindow.target != selectedTarget)
+                return true;
+
+            painterSessionPrepared = true;
+            activeWindow.CommitSplinePreview("Committed the live spline preview before opening Multi-Mesh Painter.");
+            activeWindow.StopStroke();
+            if (activeWindow.hasUnsavedChanges)
+                activeWindow.SaveMaskPage();
+
+            if (activeWindow.hasUnsavedChanges)
+            {
+                error = "The single-target Painter has unsaved changes that could not be saved. Save its mask page before opening Multi-Mesh Painter.";
+                painterSessionPrepared = false;
+                return false;
+            }
+
+            activeWindow.RestorePreviewMaterial();
+            activeWindow.DisposePaintSession();
+            activeWindow.paintStatus = "Mask session released to Multi-Mesh Painter. It will reload the saved mask when you return.";
+            activeWindow.Repaint();
+            return true;
+        }
+
+        /// <summary>Reloads the saved mask after a Multi-Mesh Painter session has finished.
+        /// This avoids resuming an older GPU working texture over newer multi-target changes.
+        /// </summary>
+        public static void ResumeAfterMultiMeshPainting(SurfacePaintTarget selectedTarget)
+        {
+            if (activeWindow == null || activeWindow.target != selectedTarget || activeWindow.profile == null)
+                return;
+
+            SurfaceLayerDefinition layer = activeWindow.GetSelectedLayer();
+            if (layer != null && activeWindow.profile.GetMaskPage(layer.MaskPageIndex) != null)
+                activeWindow.LoadMaskPage(layer.MaskPageIndex);
+            else
+                activeWindow.RestoreSavedMaskPreview();
+
+            activeWindow.Repaint();
+            SceneView.RepaintAll();
+        }
+
         private void OnSelectionChange()
         {
             if (Selection.activeGameObject == null)

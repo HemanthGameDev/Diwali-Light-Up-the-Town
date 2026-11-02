@@ -1,0 +1,43 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1db006fa6e2c61f5591d2bb52db62ad4, type: 3}
+  m_Name: SurfaceScatterProfile
+  m_EditorClassIdentifier: HemanthGameDev.SurfaceWeaver.Editor::HemanthGameDev.SurfaceWeaver.Editor.SurfaceScatterProfile
+  prefabs:
+  - prefab: {fileID: 0}
+    weight: 0
+    minimumScale: 0.01
+    maximumScale: 0.01
+    rotationOffset: {x: 0, y: 0, z: 0}
+  - prefab: {fileID: 0}
+    weight: 0
+    minimumScale: 0.01
+    maximumScale: 0.01
+    rotationOffset: {x: 0, y: 0, z: 0}
+  brushRadius: 2
+  instancesPerStamp: 8
+  strokeSpacing: 1
+  minimumInstanceDistance: 0.65
+  alignToSurfaceNormal: 1
+  maximumSlopeAngle: 45
+  surfaceOffset: 0.01
+  projectionDistance: 5
+  exclusionLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  exclusionRadius: 0.4
+  randomYaw: 1
+  yawRange: 360
+  randomPitchAndRoll: 0
+  pitchRange: 10
+  rollRange: 10
+  randomSeed: 12345

@@ -15,6 +15,7 @@ MonoBehaviour:
   baseAlbedo: {fileID: 2800000, guid: 1ec2cef6eefb69049bcdf6ec11cb0407, type: 3}
   baseTint: {r: 1, g: 1, b: 1, a: 1}
   baseTiling: {x: 1, y: 1}
+  textureMappingMode: 0
   paintLayers:
   - id: 71b916c3592346258a0ce4811c56d4e0
     displayName: Dirt
