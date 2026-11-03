@@ -29,4 +29,4 @@ MonoBehaviour:
   maskStorageMode: 0
   maskResolution: 1024
   maskPages:
-  - {fileID: 2800000, guid: 5b131cc76e64dc3419b1ff202af13821, type: 3}
+  - {fileID: 2800000, guid: e26ddfa643a3b0b4ab79176f24a292d6, type: 3}

@@ -12,6 +12,18 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
     {
         private static SurfaceWeaverWindow activeWindow;
 
+        // Reuse immutable IMGUI labels and toolbar options instead of allocating them on every
+        // EditorWindow repaint. The Painter is repainted frequently while Scene View is active.
+        private static readonly GUIContent BaseAlbedoLabel = new GUIContent("Base Albedo");
+        private static readonly GUIContent BaseTintLabel = new GUIContent("Base Tint");
+        private static readonly GUIContent BaseTilingLabel = new GUIContent("Base Tiling");
+        private static readonly GUIContent MaskStorageLabel = new GUIContent("Mask Storage");
+        private static readonly GUIContent MaskResolutionLabel = new GUIContent("Mask Resolution");
+        private static readonly GUIContent MaskPagesLabel = new GUIContent("Mask Pages");
+        private static readonly GUIContent PaintLayersLabel = new GUIContent("Paint Layers");
+        private static readonly string[] PaintingOperationLabels = { "Paint", "Erase", "Smooth" };
+        private static readonly GUILayoutOption UndoRedoCounterWidth = GUILayout.Width(112f);
+
         private SurfacePaintTarget target;
         private SurfacePaintProfile profile;
         private MeshUvValidationReport lastReport;
@@ -81,6 +93,20 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         private bool hasUnsavedChanges;
         private bool hasUnsavedChangesBeforeStroke;
         private string paintStatus = "Create or load a mask page to begin painting.";
+
+        // Cached Editor-only state. SerializedObject.Update is still called each GUI pass so
+        // Undo, Inspector edits and external asset changes continue to flow into the window.
+        private SerializedObject profileSerializedObject;
+        private SurfacePaintProfile profileSerializedObjectTarget;
+        private SurfacePaintProfile layerPopupCacheProfile;
+        private string[] layerPopupOptions;
+        private string[] layerPopupSourceNames;
+        private string[] pathAnchorPopupOptions;
+        private int pathAnchorPopupOptionCount = -1;
+
+        // Renderer.sharedMaterials returns a fresh array. Use the list overload while checking
+        // shader properties during IMGUI repaint to avoid per-repaint managed array allocations.
+        private readonly List<Material> rendererMaterialScratch = new List<Material>(4);
 
         private SurfaceUvRasterMesh uvRasterMesh;
         private Mesh uvRasterSourceMesh;
@@ -461,6 +487,66 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             SceneView.RepaintAll();
         }
 
+        private SerializedObject GetProfileSerializedObject()
+        {
+            if (profile == null)
+            {
+                profileSerializedObject = null;
+                profileSerializedObjectTarget = null;
+                return null;
+            }
+
+            if (profileSerializedObject == null || profileSerializedObjectTarget != profile)
+            {
+                profileSerializedObjectTarget = profile;
+                profileSerializedObject = new SerializedObject(profile);
+            }
+
+            // Keep the cached wrapper synchronized with Undo, Inspector changes and other editors.
+            profileSerializedObject.Update();
+            return profileSerializedObject;
+        }
+
+        private string[] GetLayerPopupOptions()
+        {
+            int count = profile.PaintLayers.Count;
+            if (layerPopupCacheProfile != profile || layerPopupOptions == null || layerPopupOptions.Length != count)
+            {
+                layerPopupCacheProfile = profile;
+                layerPopupOptions = new string[count];
+                layerPopupSourceNames = new string[count];
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                SurfaceLayerDefinition layer = profile.PaintLayers[i];
+                string displayName = layer != null ? layer.DisplayName : null;
+                if (!string.Equals(layerPopupSourceNames[i], displayName, StringComparison.Ordinal) ||
+                    layerPopupOptions[i] == null)
+                {
+                    layerPopupSourceNames[i] = displayName;
+                    layerPopupOptions[i] = layer != null ? displayName : "Missing Layer " + i;
+                }
+            }
+
+            return layerPopupOptions;
+        }
+
+        private string[] GetPathAnchorPopupOptions()
+        {
+            int optionCount = pathPoints.Count + 1;
+            if (pathAnchorPopupOptions == null || pathAnchorPopupOptionCount != optionCount)
+            {
+                pathAnchorPopupOptionCount = optionCount;
+                pathAnchorPopupOptions = new string[optionCount];
+                pathAnchorPopupOptions[0] = "None";
+                for (int i = 1; i < optionCount; i++)
+                    pathAnchorPopupOptions[i] = "P" + i;
+            }
+
+            return pathAnchorPopupOptions;
+        }
+
         private void DrawProfileSection()
         {
             EditorGUILayout.LabelField("Surface Profile", EditorStyles.boldLabel);
@@ -491,16 +577,18 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             if (profile == null)
                 return;
 
-            SerializedObject serializedProfile = new SerializedObject(profile);
-            serializedProfile.Update();
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("baseAlbedo"), new GUIContent("Base Albedo"));
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("baseTint"), new GUIContent("Base Tint"));
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("baseTiling"), new GUIContent("Base Tiling"));
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("maskStorageMode"), new GUIContent("Mask Storage"));
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("maskResolution"), new GUIContent("Mask Resolution"));
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("maskPages"), new GUIContent("Mask Pages"), true);
+            SerializedObject serializedProfile = GetProfileSerializedObject();
+            if (serializedProfile == null)
+                return;
+
+            EditorGUILayout.PropertyField(serializedProfile.FindProperty("baseAlbedo"), BaseAlbedoLabel);
+            EditorGUILayout.PropertyField(serializedProfile.FindProperty("baseTint"), BaseTintLabel);
+            EditorGUILayout.PropertyField(serializedProfile.FindProperty("baseTiling"), BaseTilingLabel);
+            EditorGUILayout.PropertyField(serializedProfile.FindProperty("maskStorageMode"), MaskStorageLabel);
+            EditorGUILayout.PropertyField(serializedProfile.FindProperty("maskResolution"), MaskResolutionLabel);
+            EditorGUILayout.PropertyField(serializedProfile.FindProperty("maskPages"), MaskPagesLabel, true);
             EditorGUILayout.Space(4f);
-            EditorGUILayout.PropertyField(serializedProfile.FindProperty("paintLayers"), new GUIContent("Paint Layers"), true);
+            EditorGUILayout.PropertyField(serializedProfile.FindProperty("paintLayers"), PaintLayersLabel, true);
             EditorGUILayout.HelpBox(
                 "Profile tint, tiling and opacity are defaults. Once a material is created, its tuned values are preserved by Update Profile Bindings. Use Reset Material Tuning from Profile on the target Inspector only when you intentionally want to overwrite the material values.",
                 MessageType.Info);
@@ -556,12 +644,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 return;
             }
 
-            string[] layerNames = new string[profile.PaintLayers.Count];
-            for (int i = 0; i < layerNames.Length; i++)
-            {
-                SurfaceLayerDefinition item = profile.PaintLayers[i];
-                layerNames[i] = item != null ? item.DisplayName : "Missing Layer " + i;
-            }
+            string[] layerNames = GetLayerPopupOptions();
             selectedLayerIndex = Mathf.Clamp(selectedLayerIndex, 0, layerNames.Length - 1);
             int previousLayerIndex = selectedLayerIndex;
             selectedLayerIndex = EditorGUILayout.Popup("Paint Layer", selectedLayerIndex, layerNames);
@@ -615,7 +698,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                 "Brush Alpha Override", directBrushAlpha, typeof(Texture2D), false);
             seamAwareProjection = EditorGUILayout.ToggleLeft(
                 "Seam-Aware Mesh Projection (recommended)", seamAwareProjection);
-            operationToolbar = GUILayout.Toolbar(operationToolbar, new[] { "Paint", "Erase", "Smooth" });
+            operationToolbar = GUILayout.Toolbar(operationToolbar, PaintingOperationLabels);
             paintingEnabled = EditorGUILayout.ToggleLeft("Enable Scene View Painting", paintingEnabled);
             brushRadius = EditorGUILayout.Slider("Radius (World Units)", brushRadius, 0.05f, 20f);
             brushOpacity = EditorGUILayout.Slider("Opacity", brushOpacity, 0.01f, 1f);
@@ -752,7 +835,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
                             RedoPaintStroke();
                     }
                     GUILayout.Label("Undo " + gpuEngine.UndoCount + " / Redo " + gpuEngine.RedoCount,
-                        GUILayout.Width(112f));
+                        UndoRedoCounterWidth);
                 }
                 EditorGUILayout.LabelField("History memory", FormatBytes(gpuEngine.HistoryMemoryBytes));
 
@@ -856,11 +939,7 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
             // handles overlap or are difficult to click. It does not change the active paint target.
             if (pathPoints.Count > 0)
             {
-                string[] anchorOptions = new string[pathPoints.Count + 1];
-                anchorOptions[0] = "None";
-                for (int i = 0; i < pathPoints.Count; i++)
-                    anchorOptions[i + 1] = "P" + (i + 1);
-
+                string[] anchorOptions = GetPathAnchorPopupOptions();
                 int currentAnchorOption = Mathf.Clamp(selectedPathPointIndex + 1, 0, anchorOptions.Length - 1);
                 EditorGUI.BeginChangeCheck();
                 int selectedAnchorOption = EditorGUILayout.Popup(
@@ -3047,41 +3126,62 @@ namespace HemanthGameDev.SurfaceWeaver.Editor
         /// </summary>
         private void ResolveMaskPreviewPropertyForCurrentTarget()
         {
-            if (target == null)
+            if (target == null || !target.TryGetRenderer(out MeshRenderer renderer) || renderer == null)
                 return;
 
+            // Inspect all material slots in one pass. Calling Renderer.sharedMaterials here
+            // returned a new managed array on every IMGUI repaint (and up to three times when
+            // resolving the compatibility fallbacks).
+            rendererMaterialScratch.Clear();
+            renderer.GetSharedMaterials(rendererMaterialScratch);
+
+            bool supportsConfiguredProperty = false;
+            bool supportsPackedMaskPage = false;
+            bool supportsLegacyPaintMask = false;
+            for (int i = 0; i < rendererMaterialScratch.Count; i++)
+            {
+                Material material = rendererMaterialScratch[i];
+                if (material == null)
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(maskPreviewProperty) && material.HasProperty(maskPreviewProperty))
+                    supportsConfiguredProperty = true;
+                if (material.HasProperty("_MaskPage0"))
+                    supportsPackedMaskPage = true;
+                if (material.HasProperty("_PaintMask"))
+                    supportsLegacyPaintMask = true;
+            }
+
             // Preserve an explicitly configured property whenever the current renderer supports it.
-            if (RendererHasProperty(target, maskPreviewProperty))
+            if (supportsConfiguredProperty)
                 return;
 
             // Prefer the v0.7 packed page when the generated SurfaceWeaver material is assigned.
-            if (RendererHasProperty(target, "_MaskPage0"))
+            if (supportsPackedMaskPage)
             {
                 maskPreviewProperty = "_MaskPage0";
                 return;
             }
 
             // Retain compatibility with older Shader Graph materials.
-            if (RendererHasProperty(target, "_PaintMask"))
-            {
+            if (supportsLegacyPaintMask)
                 maskPreviewProperty = "_PaintMask";
-                return;
-            }
         }
 
-        private static bool RendererHasProperty(SurfacePaintTarget paintTarget, string propertyName)
+        private bool RendererHasProperty(SurfacePaintTarget paintTarget, string propertyName)
         {
             if (paintTarget == null || string.IsNullOrWhiteSpace(propertyName))
                 return false;
 
-            MeshRenderer renderer;
-            if (!paintTarget.TryGetRenderer(out renderer))
+            if (!paintTarget.TryGetRenderer(out MeshRenderer renderer) || renderer == null)
                 return false;
 
-            Material[] materials = renderer.sharedMaterials;
-            for (int i = 0; i < materials.Length; i++)
+            rendererMaterialScratch.Clear();
+            renderer.GetSharedMaterials(rendererMaterialScratch);
+            for (int i = 0; i < rendererMaterialScratch.Count; i++)
             {
-                if (materials[i] != null && materials[i].HasProperty(propertyName))
+                Material material = rendererMaterialScratch[i];
+                if (material != null && material.HasProperty(propertyName))
                     return true;
             }
             return false;

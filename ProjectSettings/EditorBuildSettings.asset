@@ -6,11 +6,11 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/checkpoint/Town_01_EnvironmentPass.unity
-    guid: bc506b19fc1d7d8418f05a2f2434dca6
-  - enabled: 0
     path: Assets/checkpoint/SW_MobileBenchmark.unity
     guid: ab257166d623a544ba1e755c88412c05
+  - enabled: 0
+    path: Assets/checkpoint/Town_01_EnvironmentPass.unity
+    guid: bc506b19fc1d7d8418f05a2f2434dca6
   - enabled: 0
     path: Assets/Scenes/Town_01_Prototype.unity
     guid: 99c9720ab356a0642a771bea13969a05

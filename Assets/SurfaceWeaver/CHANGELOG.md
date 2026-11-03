@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.4-preview.1
+- Reduced repeated managed allocations in the Painter EditorWindow repaint path by caching static IMGUI labels, popup option arrays and the profile SerializedObject.
+- Replaced per-repaint renderer shared-material array retrieval in preview-property checks with a reusable material list and one-pass `_MaskPage0` / `_PaintMask` resolution.
+- Added a focused Editor repaint allocation regression test plan and recorded the supplied Profiler baseline.
+- Unity compilation, interaction regression testing and post-patch profiling remain pending in the consuming project.
+
 ## v0.9.0-preview.2
 - Added GPU mask-session Undo/Redo EditMode integration tests for stroke commit, multi-operation single-step history, Cancel, pending-stroke guards, redo branch invalidation and processed-pixel operations.
 - Added two-session history tests for per-target GPU sessions used by cross-target painting.
